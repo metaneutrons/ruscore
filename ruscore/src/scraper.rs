@@ -71,31 +71,37 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<ScorePages> {
 
     debug!("Scroll height: {height}px");
 
-    let step = 300;
-    let mut pos = 0i64;
-    let total = height as i64;
-
-    while pos < total {
-        session
-            .evaluate(&format!(
-                r#"(() => {{
+    // Fire-and-forget: start the scroll loop inside the browser
+    // Don't await the promise — it may not resolve if React re-renders
+    session
+        .send(
+            "Runtime.evaluate",
+            serde_json::json!({
+                "expression": r#"(async () => {
                     let el = document.querySelector("img[src*='score_0.svg']");
-                    while (el && el !== document.body) {{
-                        if (el.scrollHeight > el.clientHeight + 10) {{ el.scrollTop = {pos}; return; }}
+                    while (el && el !== document.body) {
+                        if (el.scrollHeight > el.clientHeight + 10) break;
                         el = el.parentElement;
-                    }}
-                }})()"#
-            ))
-            .await?;
-        pos += step;
+                    }
+                    if (!el) return;
+                    for (let pos = 0; pos < el.scrollHeight; pos += 300) {
+                        el.scrollTop = pos;
+                        await new Promise(r => setTimeout(r, 300));
+                    }
+                    el.scrollTop = el.scrollHeight;
+                })()"#,
+                "returnByValue": true,
+                "awaitPromise": false
+            }),
+        )
+        .await?;
 
-        // Drain any events that arrived during this scroll step
-        drain_svg_events(session, &svg_re, &mut svg_requests);
-        sleep(Duration::from_millis(500)).await;
-    }
+    // Wait for the scroll to complete and SVGs to load, draining events
+    let scroll_time = (height / 300.0 * 0.3) as u64 + 10;
+    info!("Waiting ~{scroll_time}s for scroll + lazy loading...");
 
     // Wait for remaining SVGs to load
-    for i in 0..30 {
+    for i in 0..60 {
         sleep(Duration::from_secs(1)).await;
         drain_svg_events(session, &svg_re, &mut svg_requests);
         if svg_requests.len() >= total_pages {
