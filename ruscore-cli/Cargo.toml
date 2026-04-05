@@ -1,0 +1,20 @@
+[package]
+name = "ruscore-cli"
+description = "CLI tool to scrape MuseScore sheet music and convert to PDF"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "ruscore"
+path = "src/main.rs"
+
+[dependencies]
+ruscore-core = { path = "../ruscore-core" }
+anyhow = "1.0.102"
+clap = { version = "4.6.0", features = ["derive"] }
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }

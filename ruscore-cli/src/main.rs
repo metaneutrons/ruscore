@@ -1,15 +1,6 @@
-//! Scrape MuseScore sheet music SVGs and convert to PDF.
+//! CLI tool to scrape MuseScore sheet music and convert to PDF.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
-#![warn(clippy::redundant_closure)]
-#![warn(clippy::implicit_clone)]
-#![warn(clippy::uninlined_format_args)]
-
-mod cdp;
-mod chrome;
-mod pdf;
-mod scraper;
 
 use anyhow::Result;
 use clap::Parser;
@@ -38,10 +29,17 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    let mut chrome = chrome::Chrome::start().await?;
-    let pages = scraper::scrape(&mut chrome.session, &cli.url).await?;
-    pdf::generate(&pages, &cli.output)?;
+    let mut chrome = ruscore_core::chrome::Chrome::start().await?;
+    let (pages, metadata) = ruscore_core::scraper::scrape(&mut chrome.session, &cli.url).await?;
 
+    tracing::info!(
+        "Score: {} by {} ({} pages)",
+        metadata.title,
+        metadata.composer,
+        metadata.pages
+    );
+
+    ruscore_core::pdf::generate(&pages, &cli.output)?;
     chrome.shutdown();
     Ok(())
 }
