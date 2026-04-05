@@ -1,0 +1,7 @@
+/target/
+/chrome_profile/
+/chrome_debug_profile/
+/score_svgs/
+*.pdf
+__pycache__/
+*.pyc

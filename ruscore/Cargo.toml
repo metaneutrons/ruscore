@@ -1,0 +1,50 @@
+[package]
+name = "ruscore"
+description = "Scrape MuseScore sheet music SVGs and convert to PDF"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# CDP client — connect to Chrome, evaluate JS, intercept network
+chromiumoxide = "0.9.1"
+
+# Async runtime
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros", "process", "time", "signal"] }
+
+# CLI argument parsing
+clap = { version = "4.6.0", features = ["derive"] }
+
+# SVG URL matching, page count extraction
+regex = "1.12.3"
+
+# SVG parsing and PDF conversion (pure Rust, cross-platform)
+usvg = "0.45.1"
+svg2pdf = "0.13.0"
+
+# Multi-page PDF construction (must match svg2pdf's dependency)
+pdf-writer = "0.12.1"
+
+# Cross-platform Chrome/Chromium binary lookup
+which = "8.0.2"
+
+# Async streams (for CDP event handling)
+futures = "0.3.32"
+
+# JSON parsing (for JS evaluation results)
+serde_json = "1.0.149"
+
+# HTTP client (for CDP readiness check — also a transitive dep of chromiumoxide)
+reqwest = { version = "0.12", default-features = false, features = ["native-tls"] }
+
+# Error handling
+anyhow = "1.0.102"
+
+# Logging / progress
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+
+# Temporary Chrome profile directory
+tempfile = "3.27.0"
