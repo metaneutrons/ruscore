@@ -18,18 +18,35 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<ScorePages> {
     info!("Navigating to {url}");
     session.navigate(url).await?;
 
-    info!("Waiting for page to load...");
-    sleep(Duration::from_secs(5)).await;
+    // Wait for the score viewer to fully render (React hydration + lazy init)
+    info!("Waiting for score viewer to load...");
+    for i in 0..60 {
+        sleep(Duration::from_secs(1)).await;
+        // Check if the scrollable container has children (score pages)
+        let children = session
+            .evaluate_f64(
+                r#"(() => {
+                    const img = document.querySelector("img[src*='score_']");
+                    if (!img) return 0;
+                    let el = img;
+                    while (el && el !== document.body) {
+                        if (el.scrollHeight > el.clientHeight + 10) return el.children.length;
+                        el = el.parentElement;
+                    }
+                    return 0;
+                })()"#,
+            )
+            .await
+            .unwrap_or(0.0);
 
-    info!("Waiting for score to appear...");
-    for _ in 0..120 {
-        if session
-            .evaluate_bool("!!document.querySelector(\"img[src*='score_']\")")
-            .await?
-        {
+        if children > 1.0 {
+            debug!(
+                "Score viewer ready after {}s ({} children)",
+                i + 1,
+                children as usize
+            );
             break;
         }
-        sleep(Duration::from_millis(500)).await;
     }
 
     let total_pages = extract_page_count(session).await?;
@@ -74,15 +91,22 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<ScorePages> {
 
         // Drain any events that arrived during this scroll step
         drain_svg_events(session, &svg_re, &mut svg_requests);
-        sleep(Duration::from_millis(250)).await;
+        sleep(Duration::from_millis(500)).await;
     }
 
     // Wait for remaining SVGs to load
-    for _ in 0..20 {
-        sleep(Duration::from_millis(500)).await;
+    for i in 0..30 {
+        sleep(Duration::from_secs(1)).await;
         drain_svg_events(session, &svg_re, &mut svg_requests);
         if svg_requests.len() >= total_pages {
+            info!("All {total_pages} pages captured!");
             break;
+        }
+        if i % 5 == 4 {
+            debug!(
+                "  {}/{total_pages} captured, waiting...",
+                svg_requests.len()
+            );
         }
     }
 
@@ -117,28 +141,40 @@ fn drain_svg_events(
     svg_re: &Regex,
     svg_requests: &mut BTreeMap<usize, String>,
 ) {
+    let mut event_count = 0;
+    let mut network_count = 0;
     while let Ok((method, params)) = session.events.try_recv() {
-        if method != "Network.responseReceived" {
-            continue;
+        event_count += 1;
+        if method == "Network.responseReceived" {
+            network_count += 1;
+            let Some(url) = params
+                .get("response")
+                .and_then(|r| r.get("url"))
+                .and_then(|u| u.as_str())
+            else {
+                continue;
+            };
+            if url.contains("score_") {
+                debug!(
+                    "  Network response: ...{}",
+                    &url[url.len().saturating_sub(60)..]
+                );
+            }
+            let Some(caps) = svg_re.captures(url) else {
+                continue;
+            };
+            let Some(idx) = caps.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) else {
+                continue;
+            };
+            let Some(req_id) = params.get("requestId").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            info!("  Captured score_{idx}.svg (request {req_id})");
+            svg_requests.insert(idx, req_id.to_string());
         }
-        let Some(url) = params
-            .get("response")
-            .and_then(|r| r.get("url"))
-            .and_then(|u| u.as_str())
-        else {
-            continue;
-        };
-        let Some(caps) = svg_re.captures(url) else {
-            continue;
-        };
-        let Some(idx) = caps.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) else {
-            continue;
-        };
-        let Some(req_id) = params.get("requestId").and_then(|v| v.as_str()) else {
-            continue;
-        };
-        debug!("  Captured score_{idx}.svg (request {req_id})");
-        svg_requests.insert(idx, req_id.to_string());
+    }
+    if event_count > 0 {
+        debug!("  Drained {event_count} events ({network_count} network responses)");
     }
 }
 
