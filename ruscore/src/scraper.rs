@@ -52,27 +52,15 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<ScorePages> {
     let total_pages = extract_page_count(session).await?;
     info!("Score has {total_pages} pages.");
 
-    // Scroll and collect SVG network responses simultaneously
+    // Scroll page-by-page, waiting for each SVG to load before advancing
     info!("Scrolling score viewer and capturing SVGs...");
     let mut svg_requests: BTreeMap<usize, String> = BTreeMap::new();
 
-    let height = session
-        .evaluate_f64(
-            r#"(() => {
-                let el = document.querySelector("img[src*='score_0.svg']");
-                while (el && el !== document.body) {
-                    if (el.scrollHeight > el.clientHeight + 10) return el.scrollHeight;
-                    el = el.parentElement;
-                }
-                return 0;
-            })()"#,
-        )
-        .await?;
+    // Drain initial events (score_0.svg loads with the page)
+    sleep(Duration::from_secs(1)).await;
+    drain_svg_events(session, &svg_re, &mut svg_requests);
 
-    debug!("Scroll height: {height}px");
-
-    // Fire-and-forget: start the scroll loop inside the browser
-    // Don't await the promise — it may not resolve if React re-renders
+    // Fire-and-forget continuous scroll inside the browser
     session
         .send(
             "Runtime.evaluate",
@@ -96,25 +84,33 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<ScorePages> {
         )
         .await?;
 
-    // Wait for the scroll to complete and SVGs to load, draining events
-    let scroll_time = (height / 300.0 * 0.3) as u64 + 10;
-    info!("Waiting ~{scroll_time}s for scroll + lazy loading...");
-
-    // Wait for remaining SVGs to load
-    for i in 0..60 {
-        sleep(Duration::from_secs(1)).await;
-        drain_svg_events(session, &svg_re, &mut svg_requests);
-        if svg_requests.len() >= total_pages {
-            info!("All {total_pages} pages captured!");
-            break;
+    // Wait for each page's SVG to arrive, with per-page timeout
+    for page_idx in 0..total_pages {
+        if svg_requests.contains_key(&page_idx) {
+            info!("  Page {} ✓ (already loaded)", page_idx + 1);
+            continue;
         }
-        if i % 5 == 4 {
-            debug!(
-                "  {}/{total_pages} captured, waiting...",
-                svg_requests.len()
-            );
+
+        let mut found = false;
+        for _ in 0..20 {
+            sleep(Duration::from_millis(500)).await;
+            drain_svg_events(session, &svg_re, &mut svg_requests);
+            if svg_requests.contains_key(&page_idx) {
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            info!("  Page {} ✓", page_idx + 1);
+        } else {
+            warn!("  Page {} timed out, continuing", page_idx + 1);
         }
     }
+
+    // Final drain for any stragglers
+    sleep(Duration::from_secs(2)).await;
+    drain_svg_events(session, &svg_re, &mut svg_requests);
 
     info!(
         "Found {} SVG responses. Fetching bodies...",
