@@ -20,8 +20,20 @@ pub async fn scrape(browser: &Browser, url: &str) -> Result<ScorePages> {
     info!("Navigating to {url}");
     page.goto(url).await.context("failed to navigate to URL")?;
 
-    // Wait for the score image to appear
-    info!("Waiting for score to load...");
+    // Wait for the page to actually load (Cloudflare challenge takes time)
+    info!("Waiting for page to load (Cloudflare challenge may take a moment)...");
+    sleep(Duration::from_secs(5)).await;
+
+    // Check what URL we're actually on
+    let current_url: String = page
+        .evaluate("window.location.href")
+        .await?
+        .into_value()
+        .unwrap_or_default();
+    debug!("Current URL: {current_url}");
+
+    // Wait for the score image to appear in the DOM
+    info!("Waiting for score to appear...");
     wait_for_score(&page).await?;
 
     // Extract total page count from alt text
@@ -33,32 +45,49 @@ pub async fn scrape(browser: &Browser, url: &str) -> Result<ScorePages> {
     scroll_score_viewer(&page).await?;
     sleep(Duration::from_secs(2)).await;
 
-    // Get the first SVG URL to derive the pattern
-    let first_src: String = page
-        .evaluate("document.querySelector(\"img[src*='score_'][src*='.svg']\")?.src || ''")
+    // Collect all score SVG URLs from the DOM (they're S3 presigned URLs, not predictable)
+    info!("Collecting SVG URLs from page...");
+    let svg_urls: Vec<String> = page
+        .evaluate(
+            r#"(() => {
+                const urls = [];
+                for (const img of document.querySelectorAll('img')) {
+                    const src = img.src || img.dataset?.src || '';
+                    if (/score_\d+\.svg/.test(src)) urls.push(src);
+                }
+                return JSON.stringify([...new Set(urls)]);
+            })()"#,
+        )
         .await
-        .context("failed to query first SVG src")?
-        .into_value()
+        .context("failed to collect SVG URLs")?
+        .into_value::<String>()
+        .map(|s| serde_json::from_str::<Vec<String>>(&s).unwrap_or_default())
         .unwrap_or_default();
 
-    if first_src.is_empty() {
-        bail!("could not find score SVG URL in page");
+    if svg_urls.is_empty() {
+        bail!("no score SVG URLs found in page DOM");
     }
-    debug!("First SVG URL: {first_src}");
 
-    let (prefix, suffix) = parse_svg_url_parts(&first_src)?;
+    info!("Found {} SVG URLs in DOM.", svg_urls.len());
 
-    // Download each SVG using in-browser fetch (carries Cloudflare cookies)
-    info!("Downloading {total_pages} SVGs...");
+    // Download each SVG using in-browser fetch (carries Cloudflare cookies + S3 auth)
+    info!("Downloading {} SVGs...", svg_urls.len());
     let mut result = BTreeMap::new();
+    let svg_pattern = Regex::new(r"score_(\d+)\.svg")?;
 
-    for i in 0..total_pages {
-        let svg_url = format!("{prefix}score_{i}.svg{suffix}");
+    for svg_url in &svg_urls {
+        let idx = svg_pattern
+            .captures(svg_url)
+            .and_then(|c| c.get(1))
+            .and_then(|m| m.as_str().parse::<usize>().ok())
+            .unwrap_or(0);
 
+        // Escape the URL for JS string embedding
+        let escaped_url = svg_url.replace('\\', "\\\\").replace('"', "\\\"");
         let js = format!(
             r#"(async () => {{
                 try {{
-                    const r = await fetch("{svg_url}");
+                    const r = await fetch("{escaped_url}");
                     if (!r.ok) return JSON.stringify({{error: r.status}});
                     return JSON.stringify({{data: await r.text()}});
                 }} catch(e) {{
@@ -70,20 +99,20 @@ pub async fn scrape(browser: &Browser, url: &str) -> Result<ScorePages> {
         let response: String = page
             .evaluate(js)
             .await
-            .with_context(|| format!("JS fetch failed for page {i}"))?
+            .with_context(|| format!("JS fetch failed for page {idx}"))?
             .into_value()
             .unwrap_or_default();
 
         let parsed: serde_json::Value = serde_json::from_str(&response).unwrap_or_default();
 
         if let Some(data) = parsed.get("data").and_then(|v| v.as_str()) {
-            info!("  Page {}: {} bytes", i + 1, data.len());
-            result.insert(i, data.as_bytes().to_vec());
+            info!("  Page {}: {} bytes", idx + 1, data.len());
+            result.insert(idx, data.as_bytes().to_vec());
         } else {
             let err = parsed
                 .get("error")
                 .map_or("unknown".into(), |v| v.to_string());
-            warn!("  Page {} FAILED: {err}", i + 1);
+            warn!("  Page {} FAILED: {err}", idx + 1);
         }
     }
 
@@ -91,7 +120,7 @@ pub async fn scrape(browser: &Browser, url: &str) -> Result<ScorePages> {
         bail!("no SVGs downloaded — Cloudflare may have blocked requests");
     }
 
-    info!("Downloaded {}/{total_pages} SVGs.", result.len());
+    info!("Downloaded {}/{} SVGs.", result.len(), svg_urls.len());
     Ok(result)
 }
 
@@ -132,45 +161,64 @@ async fn extract_page_count(page: &chromiumoxide::Page) -> Result<usize> {
 
 /// Scroll the score viewer container incrementally to trigger lazy loading.
 async fn scroll_score_viewer(page: &chromiumoxide::Page) -> Result<()> {
-    let result: String = page
+    // First, find the scrollable container and get its scroll height
+    let scroll_height: f64 = page
         .evaluate(
-            r#"(async () => {
+            r#"(() => {
                 let el = document.querySelector("img[src*='score_0.svg']");
-                let scrollable = null;
                 while (el && el !== document.body) {
-                    if (el.scrollHeight > el.clientHeight + 10) {
-                        scrollable = el;
-                        break;
-                    }
+                    if (el.scrollHeight > el.clientHeight + 10) return el.scrollHeight;
                     el = el.parentElement;
                 }
-                if (!scrollable) return "no scrollable container found";
-
-                for (let pos = 0; pos < scrollable.scrollHeight; pos += 300) {
-                    scrollable.scrollTop = pos;
-                    await new Promise(r => setTimeout(r, 300));
-                }
-                scrollable.scrollTop = scrollable.scrollHeight;
-                return "scrolled " + scrollable.scrollHeight + "px";
+                return 0;
             })()"#,
         )
         .await?
         .into_value()
-        .unwrap_or_default();
+        .unwrap_or(0.0);
 
-    debug!("Scroll result: {result}");
+    if scroll_height < 1.0 {
+        warn!("No scrollable score viewer container found");
+        return Ok(());
+    }
+
+    debug!("Score viewer scroll height: {scroll_height}px");
+
+    // Scroll in small increments with separate evaluate calls
+    // to keep the WebSocket connection alive
+    let step = 300;
+    let total = scroll_height as i64;
+    let mut pos = 0i64;
+
+    while pos < total {
+        page.evaluate(format!(
+            r#"(() => {{
+                let el = document.querySelector("img[src*='score_0.svg']");
+                while (el && el !== document.body) {{
+                    if (el.scrollHeight > el.clientHeight + 10) {{ el.scrollTop = {pos}; return true; }}
+                    el = el.parentElement;
+                }}
+                return false;
+            }})()"#
+        ))
+        .await?;
+
+        pos += step;
+        sleep(Duration::from_millis(250)).await;
+    }
+
+    // Scroll to the very end
+    page.evaluate(
+        r#"(() => {
+            let el = document.querySelector("img[src*='score_0.svg']");
+            while (el && el !== document.body) {
+                if (el.scrollHeight > el.clientHeight + 10) { el.scrollTop = el.scrollHeight; return; }
+                el = el.parentElement;
+            }
+        })()"#,
+    )
+    .await?;
+
+    debug!("Scroll complete");
     Ok(())
-}
-
-/// Parse the first SVG URL into prefix and suffix for constructing other page URLs.
-///
-/// Input:  `https://example.com/path/score_0.svg?no-cache=123`
-/// Output: `("https://example.com/path/", "?no-cache=123")`
-fn parse_svg_url_parts(url: &str) -> Result<(String, String)> {
-    let re = Regex::new(r"^(.*/)score_0\.svg(.*)$")?;
-    let caps = re
-        .captures(url)
-        .context("first SVG URL doesn't match expected pattern")?;
-
-    Ok((caps[1].to_string(), caps[2].to_string()))
 }

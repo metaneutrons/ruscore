@@ -37,7 +37,10 @@ impl Chrome {
             .arg(format!("--user-data-dir={}", profile_dir.path().display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
+            .arg("--disable-blink-features=AutomationControlled")
             .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .spawn()
             .with_context(|| format!("failed to launch Chrome: {}", chrome_path.display()))?;
 

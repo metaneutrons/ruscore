@@ -44,7 +44,7 @@ anyhow = "1.0.102"
 
 # Logging / progress
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["fmt"] }
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 
 # Temporary Chrome profile directory
 tempfile = "3.27.0"
