@@ -6,6 +6,7 @@
 #![warn(clippy::implicit_clone)]
 #![warn(clippy::uninlined_format_args)]
 
+mod cdp;
 mod chrome;
 mod pdf;
 mod scraper;
@@ -31,14 +32,14 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,chromiumoxide=error".parse().expect("valid filter")),
+                .unwrap_or_else(|_| "info".parse().expect("valid filter")),
         )
         .init();
 
     let cli = Cli::parse();
 
     let mut chrome = chrome::Chrome::start().await?;
-    let pages = scraper::scrape(&chrome.browser, &cli.url).await?;
+    let pages = scraper::scrape(&mut chrome.session, &cli.url).await?;
     pdf::generate(&pages, &cli.output)?;
 
     chrome.shutdown();

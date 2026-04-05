@@ -1,30 +1,27 @@
 //! Cross-platform Chrome detection, launch, and CDP connection.
-//!
-//! Launches a real Chrome instance with `--remote-debugging-port` to avoid
-//! Cloudflare bot detection. Connects via CDP for automation.
 
 use anyhow::{Context, Result, bail};
-use futures::StreamExt;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, info};
 
+use crate::cdp::{CdpSession, discover_page_ws};
+
 /// Default CDP debugging port.
 const DEBUG_PORT: u16 = 9222;
 
-/// A managed Chrome instance with CDP connection.
+/// A managed Chrome instance with a CDP session.
 pub struct Chrome {
     process: Child,
     _profile_dir: TempDir,
-    /// The CDP browser handle.
-    pub browser: chromiumoxide::Browser,
-    _handler: tokio::task::JoinHandle<()>,
+    /// The CDP session attached to the page.
+    pub session: CdpSession,
 }
 
 impl Chrome {
-    /// Find Chrome, launch it, and connect via CDP.
+    /// Find Chrome, launch it, connect via raw CDP WebSocket.
     pub async fn start() -> Result<Self> {
         let chrome_path = find_chrome()?;
         info!("Found Chrome: {}", chrome_path.display());
@@ -39,36 +36,32 @@ impl Chrome {
             .arg("--no-default-browser-check")
             .arg("--disable-blink-features=AutomationControlled")
             .arg("about:blank")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .spawn()
             .with_context(|| format!("failed to launch Chrome: {}", chrome_path.display()))?;
 
         info!("Chrome launched (pid {}), waiting for CDP...", process.id());
+        wait_for_cdp(DEBUG_PORT).await?;
 
-        let cdp_url = format!("http://127.0.0.1:{DEBUG_PORT}");
-        wait_for_cdp(&cdp_url).await?;
+        let ws_url = discover_page_ws(DEBUG_PORT).await?;
+        debug!("Page WS: {ws_url}");
 
-        let (browser, mut handler) = chromiumoxide::Browser::connect(&cdp_url)
-            .await
-            .context("failed to connect to Chrome via CDP")?;
+        let session = CdpSession::connect(&ws_url).await?;
+        session.enable_domains().await?;
 
-        // Handler is a Stream — drive it in the background
-        let _handler = tokio::spawn(async move { while handler.next().await.is_some() {} });
-
-        info!("CDP connected.");
+        info!("CDP connected (raw WS, no Page domain).");
 
         Ok(Self {
             process,
             _profile_dir: profile_dir,
-            browser,
-            _handler,
+            session,
         })
     }
 
     /// Gracefully shut down Chrome.
     pub fn shutdown(&mut self) {
-        debug!("Shutting down Chrome (pid {})...", self.process.id());
+        debug!("Shutting down Chrome...");
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
@@ -81,12 +74,11 @@ impl Drop for Chrome {
 }
 
 /// Wait for Chrome's CDP endpoint to accept connections.
-async fn wait_for_cdp(url: &str) -> Result<()> {
-    let version_url = format!("{url}/json/version");
-
+async fn wait_for_cdp(port: u16) -> Result<()> {
+    let url = format!("http://127.0.0.1:{port}/json/version");
     for attempt in 1..=30 {
         if let Ok(Ok(resp)) =
-            tokio::time::timeout(Duration::from_millis(500), reqwest::get(&version_url)).await
+            tokio::time::timeout(Duration::from_millis(500), reqwest::get(&url)).await
         {
             if resp.status().is_success() {
                 debug!("CDP ready after {attempt} attempts");
@@ -95,8 +87,7 @@ async fn wait_for_cdp(url: &str) -> Result<()> {
         }
         sleep(Duration::from_millis(200)).await;
     }
-
-    bail!("Chrome CDP endpoint did not become available at {url}")
+    bail!("Chrome CDP endpoint not available on port {port}")
 }
 
 /// Detect the Chrome/Chromium binary for the current platform.
@@ -106,26 +97,27 @@ fn find_chrome() -> Result<PathBuf> {
             return Ok(candidate);
         }
     }
-
-    for name in path_candidates() {
+    for name in PATH_CANDIDATES {
         if let Ok(path) = which::which(name) {
             return Ok(path);
         }
     }
-
-    bail!(
-        "Chrome not found. Install Google Chrome or Chromium.\n\
-         Searched: {:?}",
-        chrome_candidates()
-    )
+    bail!("Chrome not found. Install Google Chrome or Chromium.")
 }
 
-/// Platform-specific hardcoded Chrome paths.
+const PATH_CANDIDATES: &[&str] = &[
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium-browser",
+    "chromium",
+    "chrome",
+];
+
 #[cfg(target_os = "macos")]
 fn chrome_candidates() -> Vec<PathBuf> {
     vec![
-        PathBuf::from("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
-        PathBuf::from("/Applications/Chromium.app/Contents/MacOS/Chromium"),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".into(),
+        "/Applications/Chromium.app/Contents/MacOS/Chromium".into(),
     ]
 }
 
@@ -135,39 +127,27 @@ fn chrome_candidates() -> Vec<PathBuf> {
     let pf86 =
         std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into());
     let local = std::env::var("LOCALAPPDATA").unwrap_or_default();
-
-    let mut paths = vec![
+    let mut v = vec![
         PathBuf::from(&pf).join(r"Google\Chrome\Application\chrome.exe"),
         PathBuf::from(&pf86).join(r"Google\Chrome\Application\chrome.exe"),
     ];
     if !local.is_empty() {
-        paths.push(PathBuf::from(&local).join(r"Google\Chrome\Application\chrome.exe"));
+        v.push(PathBuf::from(&local).join(r"Google\Chrome\Application\chrome.exe"));
     }
-    paths
+    v
 }
 
 #[cfg(target_os = "linux")]
 fn chrome_candidates() -> Vec<PathBuf> {
     vec![
-        PathBuf::from("/usr/bin/google-chrome"),
-        PathBuf::from("/usr/bin/google-chrome-stable"),
-        PathBuf::from("/usr/bin/chromium-browser"),
-        PathBuf::from("/usr/bin/chromium"),
+        "/usr/bin/google-chrome".into(),
+        "/usr/bin/google-chrome-stable".into(),
+        "/usr/bin/chromium-browser".into(),
+        "/usr/bin/chromium".into(),
     ]
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
 fn chrome_candidates() -> Vec<PathBuf> {
     vec![]
-}
-
-/// Binary names to search in PATH as fallback.
-fn path_candidates() -> &'static [&'static str] {
-    &[
-        "google-chrome",
-        "google-chrome-stable",
-        "chromium-browser",
-        "chromium",
-        "chrome",
-    ]
 }

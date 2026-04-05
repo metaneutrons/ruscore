@@ -1,180 +1,156 @@
-//! MuseScore page navigation, score viewer scrolling, and SVG capture.
-//!
-//! After scrolling triggers lazy loading, collects SVG URLs from the browser's
-//! performance resource timing API and fetches them from cache.
+//! MuseScore scraper — navigate, scroll, capture SVGs via CDP network interception.
 
-use anyhow::{Context, Result, bail};
-use chromiumoxide::Browser;
+use anyhow::{Result, bail};
 use regex::Regex;
 use std::collections::BTreeMap;
 use tokio::time::{Duration, sleep};
 use tracing::{debug, info, warn};
 
+use crate::cdp::CdpSession;
+
 /// Scraped score: page index → SVG bytes, sorted by page number.
 pub type ScorePages = BTreeMap<usize, Vec<u8>>;
 
-/// Navigate to a MuseScore URL, scroll the score viewer, and capture all SVG pages.
-pub async fn scrape(browser: &Browser, url: &str) -> Result<ScorePages> {
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .context("failed to create new page")?;
+/// Scrape all score SVG pages from a MuseScore URL.
+pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<ScorePages> {
+    let svg_re = Regex::new(r"score_(\d+)\.svg")?;
 
     info!("Navigating to {url}");
-    page.goto(url).await.context("failed to navigate to URL")?;
+    session.navigate(url).await?;
 
-    info!("Waiting for page to load (Cloudflare challenge may take a moment)...");
+    info!("Waiting for page to load...");
     sleep(Duration::from_secs(5)).await;
 
     info!("Waiting for score to appear...");
-    wait_for_score(&page).await?;
-
-    let total_pages = extract_page_count(&page).await?;
-    info!("Score has {total_pages} pages.");
-
-    info!("Scrolling score viewer...");
-    scroll_score_viewer(&page, total_pages).await?;
-    sleep(Duration::from_secs(3)).await;
-
-    // Collect SVG URLs from performance resource timing + fetch from cache
-    info!("Downloading SVGs...");
-    let result: String = page
-        .evaluate(format!(
-            r#"(async () => {{
-                const entries = performance.getEntriesByType('resource');
-                const svgUrls = entries
-                    .filter(e => /score_\d+\.svg/.test(e.name))
-                    .map(e => e.name);
-
-                const unique = [...new Set(svgUrls)];
-                const results = {{}};
-
-                for (const url of unique) {{
-                    const m = url.match(/score_(\d+)\.svg/);
-                    if (!m) continue;
-                    const idx = parseInt(m[1]);
-                    try {{
-                        const r = await fetch(url);
-                        if (r.ok) {{
-                            results[idx] = await r.text();
-                        }}
-                    }} catch(e) {{}}
-                }}
-
-                return JSON.stringify({{
-                    found: unique.length,
-                    downloaded: Object.keys(results).length,
-                    pages: results
-                }});
-            }})()"#
-        ))
-        .await
-        .context("failed to collect SVGs")?
-        .into_value()
-        .unwrap_or_default();
-
-    let parsed: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
-
-    let found = parsed.get("found").and_then(|v| v.as_u64()).unwrap_or(0);
-    let downloaded = parsed
-        .get("downloaded")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    info!("Found {found} SVG URLs, downloaded {downloaded}.");
-
-    let mut pages_map = BTreeMap::new();
-    if let Some(pages) = parsed.get("pages").and_then(|v| v.as_object()) {
-        for (key, value) in pages {
-            if let (Ok(idx), Some(svg)) = (key.parse::<usize>(), value.as_str()) {
-                info!("  Page {}: {} bytes", idx + 1, svg.len());
-                pages_map.insert(idx, svg.as_bytes().to_vec());
-            }
-        }
-    }
-
-    if pages_map.is_empty() {
-        bail!("no SVGs downloaded — Cloudflare may have blocked the page");
-    }
-
-    info!("Captured {}/{total_pages} SVGs.", pages_map.len());
-    Ok(pages_map)
-}
-
-/// Poll until the score image element appears in the DOM.
-async fn wait_for_score(page: &chromiumoxide::Page) -> Result<()> {
     for _ in 0..120 {
-        let found: bool = page
-            .evaluate("!!document.querySelector(\"img[src*='score_']\")")
+        if session
+            .evaluate_bool("!!document.querySelector(\"img[src*='score_']\")")
             .await?
-            .into_value()
-            .unwrap_or(false);
-        if found {
-            return Ok(());
+        {
+            break;
         }
         sleep(Duration::from_millis(500)).await;
     }
-    bail!("score image not found after 60s — is this a valid MuseScore URL?")
+
+    let total_pages = extract_page_count(session).await?;
+    info!("Score has {total_pages} pages.");
+
+    // Scroll and collect SVG network responses simultaneously
+    info!("Scrolling score viewer and capturing SVGs...");
+    let mut svg_requests: BTreeMap<usize, String> = BTreeMap::new();
+
+    let height = session
+        .evaluate_f64(
+            r#"(() => {
+                let el = document.querySelector("img[src*='score_0.svg']");
+                while (el && el !== document.body) {
+                    if (el.scrollHeight > el.clientHeight + 10) return el.scrollHeight;
+                    el = el.parentElement;
+                }
+                return 0;
+            })()"#,
+        )
+        .await?;
+
+    debug!("Scroll height: {height}px");
+
+    let step = 300;
+    let mut pos = 0i64;
+    let total = height as i64;
+
+    while pos < total {
+        session
+            .evaluate(&format!(
+                r#"(() => {{
+                    let el = document.querySelector("img[src*='score_0.svg']");
+                    while (el && el !== document.body) {{
+                        if (el.scrollHeight > el.clientHeight + 10) {{ el.scrollTop = {pos}; return; }}
+                        el = el.parentElement;
+                    }}
+                }})()"#
+            ))
+            .await?;
+        pos += step;
+
+        // Drain any events that arrived during this scroll step
+        drain_svg_events(session, &svg_re, &mut svg_requests);
+        sleep(Duration::from_millis(250)).await;
+    }
+
+    // Wait for remaining SVGs to load
+    for _ in 0..20 {
+        sleep(Duration::from_millis(500)).await;
+        drain_svg_events(session, &svg_re, &mut svg_requests);
+        if svg_requests.len() >= total_pages {
+            break;
+        }
+    }
+
+    info!(
+        "Found {} SVG responses. Fetching bodies...",
+        svg_requests.len()
+    );
+
+    let mut result = BTreeMap::new();
+    for (&idx, req_id) in &svg_requests {
+        match session.get_response_body(req_id).await {
+            Ok(bytes) if !bytes.is_empty() => {
+                info!("  Page {}: {} bytes", idx + 1, bytes.len());
+                result.insert(idx, bytes);
+            }
+            Ok(_) => warn!("  Page {}: empty body", idx + 1),
+            Err(e) => warn!("  Page {}: {e}", idx + 1),
+        }
+    }
+
+    if result.is_empty() {
+        bail!("no SVGs captured");
+    }
+
+    info!("Captured {}/{total_pages} SVGs.", result.len());
+    Ok(result)
 }
 
-/// Extract total page count from the score image alt text.
-async fn extract_page_count(page: &chromiumoxide::Page) -> Result<usize> {
-    let alt: String = page
-        .evaluate("document.querySelector(\"img[src*='score_'][src*='.svg']\")?.alt || ''")
-        .await?
-        .into_value()
-        .unwrap_or_default();
+/// Drain pending events and extract SVG response request IDs.
+fn drain_svg_events(
+    session: &mut CdpSession,
+    svg_re: &Regex,
+    svg_requests: &mut BTreeMap<usize, String>,
+) {
+    while let Ok((method, params)) = session.events.try_recv() {
+        if method != "Network.responseReceived" {
+            continue;
+        }
+        let Some(url) = params
+            .get("response")
+            .and_then(|r| r.get("url"))
+            .and_then(|u| u.as_str())
+        else {
+            continue;
+        };
+        let Some(caps) = svg_re.captures(url) else {
+            continue;
+        };
+        let Some(idx) = caps.get(1).and_then(|m| m.as_str().parse::<usize>().ok()) else {
+            continue;
+        };
+        let Some(req_id) = params.get("requestId").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        debug!("  Captured score_{idx}.svg (request {req_id})");
+        svg_requests.insert(idx, req_id.to_string());
+    }
+}
+
+async fn extract_page_count(session: &CdpSession) -> Result<usize> {
+    let alt = session
+        .evaluate_string("document.querySelector(\"img[src*='score_'][src*='.svg']\")?.alt || ''")
+        .await?;
 
     let re = Regex::new(r"(\d+)\s+of\s+(\d+)\s+pages?")?;
     if let Some(caps) = re.captures(&alt) {
         return Ok(caps[2].parse::<usize>().unwrap_or(1));
     }
-    warn!("Could not parse page count from alt: {alt:?}, defaulting to 1");
+    warn!("Could not parse page count from: {alt:?}");
     Ok(1)
-}
-
-/// Scroll the score viewer container incrementally.
-/// Uses scrollIntoView on each page placeholder to reliably trigger IntersectionObserver.
-async fn scroll_score_viewer(page: &chromiumoxide::Page, total_pages: usize) -> Result<()> {
-    // Scroll each page placeholder into view
-    for i in 0..total_pages {
-        let scrolled: bool = page
-            .evaluate(format!(
-                r#"(() => {{
-                    const container = document.querySelector("img[src*='score_0.svg']");
-                    if (!container) return false;
-                    let scrollable = container;
-                    while (scrollable && scrollable !== document.body) {{
-                        if (scrollable.scrollHeight > scrollable.clientHeight + 10) break;
-                        scrollable = scrollable.parentElement;
-                    }}
-                    if (!scrollable) return false;
-                    const child = scrollable.children[{i}];
-                    if (child) child.scrollIntoView({{ behavior: 'instant', block: 'center' }});
-                    return !!child;
-                }})()"#
-            ))
-            .await?
-            .into_value()
-            .unwrap_or(false);
-
-        if !scrolled && i > 0 {
-            debug!("  No child at index {i}");
-        }
-        sleep(Duration::from_millis(500)).await;
-    }
-
-    // Also scroll to the very end
-    page.evaluate(
-        r#"(() => {
-            let el = document.querySelector("img[src*='score_0.svg']");
-            while (el && el !== document.body) {
-                if (el.scrollHeight > el.clientHeight + 10) { el.scrollTop = el.scrollHeight; return; }
-                el = el.parentElement;
-            }
-        })()"#,
-    )
-    .await?;
-
-    debug!("Scroll complete");
-    Ok(())
 }
