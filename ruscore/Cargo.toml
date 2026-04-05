@@ -42,6 +42,9 @@ reqwest = { version = "0.12", default-features = false, features = ["native-tls"
 # Error handling
 anyhow = "1.0.102"
 
+# Base64 decoding (for CDP response bodies)
+base64 = "0.22.1"
+
 # Logging / progress
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
