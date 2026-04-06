@@ -21,7 +21,7 @@ tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros", "signal"]
 uuid = { version = "1.23.0", features = ["v4", "serde"] }
 
 # SQLite — job persistence + PDF storage
-rusqlite = { version = "0.39.0", features = ["bundled"] }
+rusqlite = { version = "0.39.0", features = ["bundled", "bundled-full"] }
 
 # URL hashing for dedup
 sha2 = "0.11.0"

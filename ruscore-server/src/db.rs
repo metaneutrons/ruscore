@@ -96,7 +96,20 @@ impl JobDb {
             );
             CREATE INDEX IF NOT EXISTS idx_jobs_url_hash ON jobs(url_hash);
             CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-            CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);",
+            CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+
+            -- FTS5 full-text search index
+            CREATE VIRTUAL TABLE IF NOT EXISTS jobs_fts USING fts5(
+                id UNINDEXED,
+                url,
+                title,
+                composer,
+                arranger,
+                instruments,
+                description,
+                content='',
+                tokenize='unicode61'
+            );",
         )
         .context("failed to initialize schema")?;
         Ok(Self {
@@ -123,6 +136,11 @@ impl JobDb {
         conn.execute(
             "INSERT INTO jobs (id, url, url_hash) VALUES (?1, ?2, ?3)",
             params![id.to_string(), url, url_hash],
+        )?;
+        // Index in FTS
+        conn.execute(
+            "INSERT INTO jobs_fts (id, url, title, composer, arranger, instruments, description) VALUES (?1, ?2, '', '', '', '', '')",
+            params![id.to_string(), url],
         )?;
         self.get_by_id_inner(&conn, id)
     }
@@ -172,9 +190,47 @@ impl JobDb {
         pdf_data: &[u8],
     ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
+        let id_str = id.to_string();
         conn.execute(
             "UPDATE jobs SET status = 'completed', metadata = ?1, pages = ?2, pdf_data = ?3, updated_at = datetime('now') WHERE id = ?4",
-            params![metadata.to_string(), pages, pdf_data, id.to_string()],
+            params![metadata.to_string(), pages, pdf_data, id_str],
+        )?;
+        // Re-index FTS with full metadata
+        let title = metadata
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let composer = metadata
+            .get("composer")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let arranger = metadata
+            .get("arranger")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let instruments = metadata
+            .get("instruments")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+        let description = metadata
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let url: String =
+            conn.query_row("SELECT url FROM jobs WHERE id = ?1", params![id_str], |r| {
+                r.get(0)
+            })?;
+        // Delete old FTS entry and insert updated one
+        conn.execute("DELETE FROM jobs_fts WHERE id = ?1", params![id_str])?;
+        conn.execute(
+            "INSERT INTO jobs_fts (id, url, title, composer, arranger, instruments, description) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id_str, url, title, composer, arranger, instruments, description],
         )?;
         Ok(())
     }
@@ -235,12 +291,13 @@ impl JobDb {
         }
 
         if let Some(q) = query {
-            let pattern = format!("%{q}%");
-            let idx = bind_values.len() + 1;
+            // Use FTS5 with BM25 ranking
+            let fts_query = q.replace('"', "\"\""); // escape quotes
             conditions.push(format!(
-                "(url LIKE ?{idx} OR json_extract(metadata, '$.title') LIKE ?{idx} OR json_extract(metadata, '$.composer') LIKE ?{idx} OR json_extract(metadata, '$.arranger') LIKE ?{idx} OR json_extract(metadata, '$.description') LIKE ?{idx} OR json_extract(metadata, '$.instruments') LIKE ?{idx})"
+                "id IN (SELECT id FROM jobs_fts WHERE jobs_fts MATCH ?{})",
+                bind_values.len() + 1
             ));
-            bind_values.push(pattern);
+            bind_values.push(fts_query);
         }
 
         let where_clause = if conditions.is_empty() {
