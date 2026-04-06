@@ -3,12 +3,7 @@
     ".": {
       "release-type": "rust",
       "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": true,
-      "extra-files": [
-        "ruscore-core/Cargo.toml",
-        "ruscore-cli/Cargo.toml",
-        "ruscore-server/Cargo.toml"
-      ]
+      "bump-patch-for-minor-pre-major": true
     }
   }
 }
