@@ -313,7 +313,6 @@ impl JobDb {
     }
 
     /// Delete jobs older than the given number of hours.
-    #[allow(dead_code)]
     pub fn cleanup(&self, max_age_hours: i64) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         let deleted = conn.execute(

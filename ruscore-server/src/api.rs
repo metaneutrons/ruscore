@@ -357,6 +357,29 @@ pub async fn batch_delete(
     Ok(Json(BatchDeleteResponse { deleted }).into_response())
 }
 
+/// POST /api/v1/jobs/cleanup — delete jobs older than N hours (default 24).
+/// Requires X-Confirm: yes header.
+pub async fn cleanup(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    params: Result<Query<CleanupParams>, QueryRejection>,
+) -> Result<Response, AppError> {
+    let Query(params) = params.map_err(AppError::from)?;
+    if !is_confirmed(&headers) {
+        return Ok(ProblemDetail::bad_request(
+            "Set header 'X-Confirm: yes' to confirm cleanup",
+        ));
+    }
+    let hours = params.max_age_hours.unwrap_or(24).max(1);
+    let deleted = state.db.cleanup(hours)?;
+    Ok(Json(serde_json::json!({"deleted": deleted, "max_age_hours": hours})).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct CleanupParams {
+    max_age_hours: Option<i64>,
+}
+
 /// GET /health
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })
