@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/metaneutrons/ruscore/compare/v1.1.1...v1.1.2) (2026-04-06)
+
+
+### Bug Fixes
+
+* **docker:** use rust:latest (deps need newer than 1.85) ([e91aa83](https://github.com/metaneutrons/ruscore/commit/e91aa83189c510169492baea2ee56832333973ac))
+
 ## [1.1.1](https://github.com/metaneutrons/ruscore/compare/v1.1.0...v1.1.1) (2026-04-06)
 
 
