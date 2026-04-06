@@ -303,6 +303,12 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
         composer
     };
 
+    // Strip "Written by " prefix from composer
+    let composer = composer
+        .strip_prefix("Written by ")
+        .unwrap_or(&composer)
+        .to_string();
+
     Ok(ScoreMetadata {
         title,
         composer,
