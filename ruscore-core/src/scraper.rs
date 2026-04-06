@@ -342,9 +342,10 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
         composer
     };
 
-    // Strip "Written by " prefix from composer
+    // Strip common prefixes from composer
     let composer = composer
         .strip_prefix("Written by ")
+        .or_else(|| composer.strip_prefix("Words & Music by "))
         .unwrap_or(&composer)
         .to_string();
 
