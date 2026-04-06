@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/metaneutrons/ruscore/compare/ruscore-v1.2.0...ruscore-v1.2.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* **docker:** match glibc — use trixie for both builder and runtime ([e1f2673](https://github.com/metaneutrons/ruscore/commit/e1f267394e2bfc7a67a024655ee794ec9efe7ffd))
+
 ## [1.2.0](https://github.com/metaneutrons/ruscore/compare/ruscore-v1.1.2...ruscore-v1.2.0) (2026-04-06)
 
 
