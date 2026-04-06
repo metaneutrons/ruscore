@@ -3,7 +3,10 @@
 use crate::db::JobStatus;
 use crate::state::AppState;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{
+    Path, Query, State,
+    rejection::{JsonRejection, PathRejection, QueryRejection},
+};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -133,8 +136,9 @@ fn validate_musescore_url(url: &str) -> Result<(), String> {
 /// POST /api/v1/jobs — submit a URL for conversion.
 pub async fn create_job(
     State(state): State<AppState>,
-    Json(req): Json<CreateJobRequest>,
+    body: Result<Json<CreateJobRequest>, JsonRejection>,
 ) -> Result<Response, AppError> {
+    let Json(req) = body.map_err(AppError::from)?;
     if let Err(msg) = validate_musescore_url(&req.url) {
         return Ok(ProblemDetail::unprocessable(msg));
     }
@@ -183,8 +187,9 @@ pub async fn create_job(
 /// GET /api/v1/jobs — paginated job list with Link headers.
 pub async fn list_jobs(
     State(state): State<AppState>,
-    Query(params): Query<ListParams>,
+    params: Result<Query<ListParams>, QueryRejection>,
 ) -> Result<Response, AppError> {
+    let Query(params) = params.map_err(AppError::from)?;
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
     let list = state.db.list(
@@ -231,8 +236,9 @@ pub async fn list_jobs(
 /// GET /api/v1/jobs/suggest — typeahead search suggestions.
 pub async fn suggest(
     State(state): State<AppState>,
-    Query(params): Query<SuggestParams>,
+    params: Result<Query<SuggestParams>, QueryRejection>,
 ) -> Result<Json<Vec<SuggestResult>>, AppError> {
+    let Query(params) = params.map_err(AppError::from)?;
     let rows = state
         .db
         .suggest(&params.q, params.limit.unwrap_or(5).clamp(1, 20))?;
@@ -262,8 +268,9 @@ pub async fn suggest(
 /// GET /api/v1/jobs/:id — job status + metadata.
 pub async fn get_job(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    id: Result<Path<Uuid>, PathRejection>,
 ) -> Result<Response, AppError> {
+    let Path(id) = id.map_err(AppError::from)?;
     match state.db.get(id)? {
         Some(job) => Ok(Json(job).into_response()),
         None => Ok(ProblemDetail::not_found(format!("Job {id} not found"))),
@@ -273,8 +280,9 @@ pub async fn get_job(
 /// GET /api/v1/jobs/:id/pdf — download the generated PDF.
 pub async fn get_pdf(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    id: Result<Path<Uuid>, PathRejection>,
 ) -> Result<Response, AppError> {
+    let Path(id) = id.map_err(AppError::from)?;
     let job = match state.db.get(id)? {
         Some(j) => j,
         None => return Ok(ProblemDetail::not_found(format!("Job {id} not found"))),
@@ -318,9 +326,10 @@ pub async fn get_pdf(
 /// DELETE /api/v1/jobs/:id — delete a single job.
 pub async fn delete_job(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    id: Result<Path<Uuid>, PathRejection>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
+    let Path(id) = id.map_err(AppError::from)?;
     if !is_confirmed(&headers) {
         return Ok(ProblemDetail::bad_request(
             "Set header 'X-Confirm: yes' to confirm deletion",
@@ -336,8 +345,9 @@ pub async fn delete_job(
 pub async fn batch_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<BatchDeleteRequest>,
+    body: Result<Json<BatchDeleteRequest>, JsonRejection>,
 ) -> Result<Response, AppError> {
+    let Json(body) = body.map_err(AppError::from)?;
     if !is_confirmed(&headers) {
         return Ok(ProblemDetail::bad_request(
             "Set header 'X-Confirm: yes' to confirm deletion",
@@ -354,22 +364,70 @@ pub async fn health() -> Json<HealthResponse> {
 
 // --- Error handling (RFC 7807) ---
 
-pub struct AppError(anyhow::Error);
+pub struct AppError {
+    status: StatusCode,
+    title: &'static str,
+    detail: String,
+}
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        tracing::error!("Request error: {:#}", self.0);
-        ProblemDetail::response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Internal Server Error",
-            self.0.to_string(),
-        )
+impl AppError {
+    fn internal(err: impl std::fmt::Display) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            title: "Internal Server Error",
+            detail: err.to_string(),
+        }
     }
 }
 
-impl<E: Into<anyhow::Error>> From<E> for AppError {
-    fn from(err: E) -> Self {
-        Self(err.into())
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        if self.status == StatusCode::INTERNAL_SERVER_ERROR {
+            tracing::error!("Request error: {}", self.detail);
+        }
+        ProblemDetail::response(self.status, self.title, self.detail)
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::internal(err)
+    }
+}
+
+impl From<rusqlite::Error> for AppError {
+    fn from(err: rusqlite::Error) -> Self {
+        Self::internal(err)
+    }
+}
+
+impl From<JsonRejection> for AppError {
+    fn from(rejection: JsonRejection) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            title: "Bad Request",
+            detail: rejection.body_text(),
+        }
+    }
+}
+
+impl From<PathRejection> for AppError {
+    fn from(rejection: PathRejection) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            title: "Bad Request",
+            detail: rejection.body_text(),
+        }
+    }
+}
+
+impl From<QueryRejection> for AppError {
+    fn from(rejection: QueryRejection) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            title: "Bad Request",
+            detail: rejection.body_text(),
+        }
     }
 }
 
