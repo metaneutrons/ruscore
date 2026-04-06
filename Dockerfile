@@ -9,7 +9,7 @@ COPY ruscore-server/web/ .
 RUN npm run build
 
 # --- Stage 2: Build Rust binary ---
-FROM rust:1.85-bookworm AS builder
+FROM rust:latest AS builder
 WORKDIR /app
 
 # Copy everything and build
