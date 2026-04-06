@@ -56,7 +56,9 @@ function JobDetail() {
         {m?.arranger && <Field label="Arranger" value={m.arranger} />}
         {m?.instruments?.length ? <Field label="Instruments" value={m.instruments.join(", ")} /> : null}
         {m?.pages ? <Field label="Pages" value={String(m.pages)} /> : null}
+        <Field label="URL" value={job.url} link={job.url} />
         <Field label="Created" value={new Date(job.created_at).toLocaleString()} />
+        <Field label="Status" value={job.status} />
         {m?.description && (
           <div className="col-span-2">
             <dt className="font-medium text-(--color-text-secondary)">Description</dt>
@@ -90,11 +92,13 @@ function JobDetail() {
   );
 }
 
-function Field({ label, value }: { label: string; value: string }) {
+function Field({ label, value, link }: { label: string; value: string; link?: string }) {
   return (
     <div>
       <dt className="font-medium text-(--color-text-secondary)">{label}</dt>
-      <dd className="mt-1">{value}</dd>
+      <dd className="mt-1 break-all">
+        {link ? <a href={link} target="_blank" rel="noopener noreferrer" className="text-(--color-accent) hover:underline">{value}</a> : value}
+      </dd>
     </div>
   );
 }

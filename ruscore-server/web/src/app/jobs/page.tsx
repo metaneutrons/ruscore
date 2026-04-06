@@ -9,22 +9,42 @@ import { StatusBadge } from "@/components/status-badge";
 const PER_PAGE = 20;
 const STATUSES: (JobStatus | "")[] = ["", "queued", "processing", "completed", "failed"];
 
+type SortField = "created_at" | "title" | "composer" | "pages" | "status";
+
 export default function JobsPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<JobStatus | "">("");
+  const [sort, setSort] = useState<SortField>("created_at");
+  const [order, setOrder] = useState<"asc" | "desc">("desc");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     setLoading(true);
-    fetchJobs(page, PER_PAGE, status || undefined)
+    fetchJobs(page, PER_PAGE, status || undefined, sort, order)
       .then((data) => { setJobs(data.jobs); setTotal(data.total); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [page, status]);
+  }, [page, status, sort, order]);
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+
+  const toggleSort = (field: SortField) => {
+    if (sort === field) {
+      setOrder(order === "asc" ? "desc" : "asc");
+    } else {
+      setSort(field);
+      setOrder(field === "created_at" ? "desc" : "asc");
+    }
+    setPage(1);
+  };
+
+  const SortIcon = ({ field }: { field: SortField }) => (
+    <span className="ml-1 text-xs opacity-50">
+      {sort === field ? (order === "asc" ? "▲" : "▼") : "⇅"}
+    </span>
+  );
 
   return (
     <div>
@@ -50,12 +70,21 @@ export default function JobsPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-(--color-bg-secondary) text-xs uppercase text-(--color-text-secondary)">
               <tr>
-                <th className="px-4 py-3">Score</th>
-                <th className="px-4 py-3">Composer</th>
-                <th className="hidden px-4 py-3 sm:table-cell">Instruments</th>
-                <th className="hidden px-4 py-3 sm:table-cell">Pages</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="hidden px-4 py-3 sm:table-cell">Created</th>
+                <th className="cursor-pointer px-4 py-3" onClick={() => toggleSort("title")}>
+                  Title<SortIcon field="title" />
+                </th>
+                <th className="cursor-pointer px-4 py-3" onClick={() => toggleSort("composer")}>
+                  Composer<SortIcon field="composer" />
+                </th>
+                <th className="hidden cursor-pointer px-4 py-3 sm:table-cell" onClick={() => toggleSort("pages")}>
+                  Pages<SortIcon field="pages" />
+                </th>
+                <th className="cursor-pointer px-4 py-3" onClick={() => toggleSort("status")}>
+                  Status<SortIcon field="status" />
+                </th>
+                <th className="hidden cursor-pointer px-4 py-3 sm:table-cell" onClick={() => toggleSort("created_at")}>
+                  Created<SortIcon field="created_at" />
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-(--color-border)">
@@ -66,13 +95,10 @@ export default function JobsPage() {
                       {job.metadata?.thumbnail_url && (
                         <img src={job.metadata.thumbnail_url} alt="" className="h-10 w-8 rounded object-cover" />
                       )}
-                      <span className="font-medium">{job.metadata?.title || "—"}</span>
+                      <span className="font-medium">{job.metadata?.title || job.url}</span>
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-(--color-text-secondary)">{job.metadata?.composer || "—"}</td>
-                  <td className="hidden px-4 py-3 text-(--color-text-secondary) sm:table-cell">
-                    {job.metadata?.instruments?.join(", ") || "—"}
-                  </td>
                   <td className="hidden px-4 py-3 text-(--color-text-secondary) sm:table-cell">{job.metadata?.pages ?? "—"}</td>
                   <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
                   <td className="hidden px-4 py-3 text-(--color-text-secondary) sm:table-cell">
@@ -95,7 +121,7 @@ export default function JobsPage() {
             Previous
           </button>
           <span className="text-sm text-(--color-text-secondary)">
-            {page} / {totalPages}
+            Page {page} of {totalPages} ({total} total)
           </span>
           <button
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}

@@ -26,6 +26,8 @@ pub struct ListParams {
     page: Option<i64>,
     per_page: Option<i64>,
     status: Option<String>,
+    sort: Option<String>,
+    order: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -71,7 +73,13 @@ pub async fn list_jobs(
 ) -> Result<Json<JobList>, AppError> {
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(20).clamp(1, 100);
-    let list = state.db.list(page, per_page, params.status.as_deref())?;
+    let list = state.db.list(
+        page,
+        per_page,
+        params.status.as_deref(),
+        params.sort.as_deref(),
+        params.order.as_deref(),
+    )?;
     Ok(Json(list))
 }
 

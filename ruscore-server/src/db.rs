@@ -213,20 +213,38 @@ impl JobDb {
         Ok(deleted)
     }
 
-    /// Paginated job list with optional status filter.
-    pub fn list(&self, page: i64, per_page: i64, status: Option<&str>) -> Result<JobList> {
+    /// Paginated job list with optional status filter and sorting.
+    pub fn list(
+        &self,
+        page: i64,
+        per_page: i64,
+        status: Option<&str>,
+        sort: Option<&str>,
+        order: Option<&str>,
+    ) -> Result<JobList> {
         let conn = self.conn.lock().unwrap();
         let offset = (page - 1) * per_page;
 
-        let (where_clause, count_sql, list_sql);
-        if let Some(s) = status {
-            where_clause = format!("WHERE status = '{s}'");
-        } else {
-            where_clause = String::new();
-        }
-        count_sql = format!("SELECT COUNT(*) FROM jobs {where_clause}");
-        list_sql = format!(
-            "SELECT id, url, url_hash, status, metadata, pages, error, created_at, updated_at FROM jobs {where_clause} ORDER BY created_at DESC LIMIT ?1 OFFSET ?2"
+        let where_clause = match status {
+            Some(s) => format!("WHERE status = '{s}'"),
+            None => String::new(),
+        };
+
+        let sort_col = match sort {
+            Some("title") => "json_extract(metadata, '$.title')",
+            Some("composer") => "json_extract(metadata, '$.composer')",
+            Some("pages") => "pages",
+            Some("status") => "status",
+            _ => "created_at",
+        };
+        let sort_dir = match order {
+            Some("asc") => "ASC",
+            _ => "DESC",
+        };
+
+        let count_sql = format!("SELECT COUNT(*) FROM jobs {where_clause}");
+        let list_sql = format!(
+            "SELECT id, url, url_hash, status, metadata, pages, error, created_at, updated_at FROM jobs {where_clause} ORDER BY {sort_col} {sort_dir} LIMIT ?1 OFFSET ?2"
         );
 
         let total: i64 = conn.query_row(&count_sql, [], |row| row.get(0))?;

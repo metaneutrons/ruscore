@@ -17,9 +17,11 @@ export async function createJob(url: string): Promise<{ id: string; status: stri
   return { ...data, conflict: false };
 }
 
-export async function fetchJobs(page: number, perPage: number, status?: JobStatus): Promise<JobListResponse> {
+export async function fetchJobs(page: number, perPage: number, status?: JobStatus, sort?: string, order?: string): Promise<JobListResponse> {
   const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
   if (status) params.set("status", status);
+  if (sort) params.set("sort", sort);
+  if (order) params.set("order", order);
   const res = await fetch(`${API}/jobs?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch jobs: ${res.status}`);
   return res.json();
