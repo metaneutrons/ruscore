@@ -200,52 +200,73 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
     let json_str = session
         .evaluate_string(
             r#"(() => {
-                const el = document.querySelector('script[type="application/ld+json"]');
-                return el ? el.textContent : '{}';
+                const scripts = document.querySelectorAll('script[type="application/ld+json"]');
+                const all = [];
+                for (const s of scripts) {
+                    try { all.push(JSON.parse(s.textContent)); } catch {}
+                }
+                return JSON.stringify(all);
             })()"#,
         )
         .await?;
 
-    let ld: serde_json::Value = serde_json::from_str(&json_str).unwrap_or_default();
+    let ld_array: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap_or_default();
 
-    let title = ld
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    // Helper: find first value for a key across all JSON-LD blocks
+    let find_str = |key: &str| -> String {
+        for ld in &ld_array {
+            if let Some(v) = ld.get(key).and_then(|v| v.as_str()) {
+                if !v.is_empty() {
+                    return v.to_string();
+                }
+            }
+        }
+        String::new()
+    };
 
-    let composer = ld
-        .get("composer")
-        .and_then(|v| v.get("name").or(Some(v)))
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    let title = find_str("name");
+    let d = find_str("text");
+    let description = if d.is_empty() {
+        find_str("description")
+    } else {
+        d
+    };
+    let thumbnail_url = find_str("thumbnailUrl");
 
-    let description = ld
-        .get("text")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
-
-    let thumbnail_url = ld
-        .get("thumbnailUrl")
-        .and_then(|v| v.as_str())
-        .unwrap_or_default()
-        .to_string();
+    // Composer: check MusicComposition.composer or MusicRecording.byArtist
+    let composer = ld_array
+        .iter()
+        .find_map(|ld| {
+            ld.get("composer")
+                .and_then(|v| v.get("name").or(Some(v)))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        })
+        .or_else(|| {
+            ld_array.iter().find_map(|ld| {
+                ld.get("byArtist")
+                    .and_then(|v| v.get("name").or(Some(v)))
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            })
+        })
+        .unwrap_or_default();
 
     // Arranger + instruments from alt text: "... arranged by X ... for Organ, Trumpet ..."
     let alt = session
         .evaluate_string("document.querySelector(\"img[src*='score_'][src*='.svg']\")?.alt || ''")
         .await?;
 
-    let arranger = Regex::new(r"arranged by ([^.]+?)(?:\s+(?:for|Organ|Piano))")
+    let arranger = Regex::new(r"arranged by ([^.]+?)(?:\s+for\s)")
         .ok()
         .and_then(|re| re.captures(&alt))
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().trim().to_string())
         .unwrap_or_default();
 
-    let instruments = Regex::new(r"for (.+?)(?:\s*[–\-]\s*\d+\s+of)")
+    let instruments = Regex::new(r"\bfor\s+(.+?)(?:\s*[–\-]\s*\d+\s+of)")
         .ok()
         .and_then(|re| re.captures(&alt))
         .and_then(|c| c.get(1))
@@ -257,6 +278,30 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
                 .collect()
         })
         .unwrap_or_default();
+
+    // If title is still empty, try parsing from alt: "Title by Artist Sheet Music..."
+    let title = if title.is_empty() {
+        Regex::new(r"^(.+?)\s+by\s+")
+            .ok()
+            .and_then(|re| re.captures(&alt))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default()
+    } else {
+        title
+    };
+
+    // If composer is still empty, try from alt: "... by Artist Sheet Music..."
+    let composer = if composer.is_empty() {
+        Regex::new(r"\bby\s+(.+?)\s+Sheet Music")
+            .ok()
+            .and_then(|re| re.captures(&alt))
+            .and_then(|c| c.get(1))
+            .map(|m| m.as_str().trim().to_string())
+            .unwrap_or_default()
+    } else {
+        composer
+    };
 
     Ok(ScoreMetadata {
         title,

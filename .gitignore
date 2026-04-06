@@ -5,3 +5,5 @@
 *.pdf
 __pycache__/
 *.pyc
+data/
+data/
