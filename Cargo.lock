@@ -1927,7 +1927,7 @@ dependencies = [
 
 [[package]]
 name = "ruscore-cli"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "ruscore-core"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "ruscore-server"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "axum",

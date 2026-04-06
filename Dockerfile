@@ -1,4 +1,5 @@
 # Multi-stage build: Node (frontend) → Rust (server) → Runtime (Chrome + Xvfb)
+# All Debian stages use trixie to avoid glibc mismatch.
 
 # --- Stage 1: Build frontend ---
 FROM node:22-slim AS frontend
@@ -9,16 +10,15 @@ COPY ruscore-server/web/ .
 RUN npm run build
 
 # --- Stage 2: Build Rust binary ---
-FROM rust:latest AS builder
+FROM rust:slim-trixie AS builder
 WORKDIR /app
-
-# Copy everything and build
+RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 COPY . .
 COPY --from=frontend /app/ruscore-server/web/out/ ruscore-server/web/out/
 RUN cargo build --release --bin ruscore-server
 
-# --- Stage 3: Runtime with Chrome + Xvfb ---
-FROM debian:bookworm-slim AS runtime
+# --- Stage 3: Runtime (same Debian as builder) ---
+FROM debian:trixie-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
