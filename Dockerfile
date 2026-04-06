@@ -38,15 +38,31 @@ RUN useradd -m -s /bin/bash ruscore
 USER ruscore
 WORKDIR /home/ruscore
 
-# Xvfb wrapper script — Chrome runs "headed" inside a virtual framebuffer
-COPY --chmod=755 <<'EOF' /usr/local/bin/entrypoint.sh
+COPY --chmod=755 <<'ENTRYPOINT' /usr/local/bin/entrypoint.sh
 #!/bin/bash
 set -e
-Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
+
+# Clean up stale Xvfb lock files from previous runs
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99 2>/dev/null || true
+
+# Start Xvfb
+Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp -ac &
+XVFB_PID=$!
 export DISPLAY=:99
-sleep 1
+
+# Wait for Xvfb to be ready
+for i in $(seq 1 10); do
+    if xdpyinfo -display :99 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+
+# Graceful shutdown: kill Xvfb when server exits
+trap "kill $XVFB_PID 2>/dev/null" EXIT
+
 exec ruscore-server
-EOF
+ENTRYPOINT
 
 ENV RUSCORE_PORT=3000
 ENV RUSCORE_DATA_DIR=/home/ruscore/data
