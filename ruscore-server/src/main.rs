@@ -8,6 +8,7 @@
 mod api;
 mod cache;
 mod db;
+mod embed;
 mod state;
 mod worker;
 
@@ -71,6 +72,7 @@ async fn main() -> Result<()> {
         .route("/api/v1/jobs/{id}", get(api::get_job))
         .route("/api/v1/jobs/{id}/pdf", get(api::get_pdf))
         .route("/health", get(api::health))
+        .fallback(embed::serve_static)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
