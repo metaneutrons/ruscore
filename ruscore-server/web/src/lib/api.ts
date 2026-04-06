@@ -1,8 +1,10 @@
-import { Job, JobListResponse, JobStatus } from "./types";
+import { Job, JobListResponse, JobStatus, Suggestion } from "./types";
 
 const API = "/api/v1";
 
-export async function createJob(url: string): Promise<{ id: string; status: string; conflict: boolean }> {
+export async function createJob(
+  url: string,
+): Promise<{ id: string; status: string; conflict: boolean }> {
   const res = await fetch(`${API}/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -17,8 +19,18 @@ export async function createJob(url: string): Promise<{ id: string; status: stri
   return { ...data, conflict: false };
 }
 
-export async function fetchJobs(page: number, perPage: number, status?: JobStatus, sort?: string, order?: string, q?: string): Promise<JobListResponse> {
-  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
+export async function fetchJobs(
+  page: number,
+  perPage: number,
+  status?: JobStatus,
+  sort?: string,
+  order?: string,
+  q?: string,
+): Promise<JobListResponse> {
+  const params = new URLSearchParams({
+    page: String(page),
+    per_page: String(perPage),
+  });
   if (status) params.set("status", status);
   if (sort) params.set("sort", sort);
   if (order) params.set("order", order);
@@ -38,14 +50,6 @@ export function pdfUrl(id: string): string {
   return `${API}/jobs/${id}/pdf`;
 }
 
-export async function deleteJob(id: string): Promise<void> {
-  const res = await fetch(`${API}/jobs/${id}`, {
-    method: "DELETE",
-    headers: { "X-Confirm": "yes" },
-  });
-  if (!res.ok) throw new Error(`Failed to delete job: ${res.status}`);
-}
-
 export async function deleteJobs(ids: string[]): Promise<number> {
   const res = await fetch(`${API}/jobs/batch/delete`, {
     method: "POST",
@@ -57,13 +61,10 @@ export async function deleteJobs(ids: string[]): Promise<number> {
   return data.deleted;
 }
 
-export interface Suggestion {
-  id: string;
-  title: string;
-  composer: string;
-}
-
-export async function fetchSuggestions(q: string, limit = 5): Promise<Suggestion[]> {
+export async function fetchSuggestions(
+  q: string,
+  limit = 5,
+): Promise<Suggestion[]> {
   if (!q.trim()) return [];
   const params = new URLSearchParams({ q, limit: String(limit) });
   const res = await fetch(`${API}/jobs/suggest?${params}`);

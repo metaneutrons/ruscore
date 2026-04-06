@@ -13,10 +13,13 @@ export interface JobMetadata {
 export interface Job {
   id: string;
   url: string;
+  url_hash: string;
   status: JobStatus;
   metadata: JobMetadata | null;
-  created_at: string;
+  pages: number;
   error: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface JobListResponse {
@@ -24,4 +27,10 @@ export interface JobListResponse {
   total: number;
   page: number;
   per_page: number;
+}
+
+export interface Suggestion {
+  id: string;
+  title: string;
+  composer: string;
 }

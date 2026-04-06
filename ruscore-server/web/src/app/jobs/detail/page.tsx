@@ -1,112 +1,154 @@
 "use client";
 
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import Link from "next/link";
 import { fetchJob, pdfUrl } from "@/lib/api";
 import { Job } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 
-function JobDetail() {
-  const searchParams = useSearchParams();
-  const id = searchParams.get("id");
+function DetailContent() {
+  const params = useSearchParams();
+  const id = params.get("id");
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!id) return;
-    let active = true;
-
-    const poll = async () => {
-      try {
-        const data = await fetchJob(id);
-        if (active) setJob(data);
-        if (active && (data.status === "queued" || data.status === "processing")) {
-          setTimeout(poll, 2000);
-        }
-      } catch {
-        if (active) setError("Failed to load job");
-      }
-    };
-
-    poll();
-    return () => { active = false; };
+    try {
+      setJob(await fetchJob(id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load job");
+    }
   }, [id]);
 
-  if (!id) return <p className="text-red-500">No job ID provided.</p>;
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Auto-refresh while pending
+  useEffect(() => {
+    if (!job || (job.status !== "queued" && job.status !== "processing")) return;
+    const timer = setTimeout(load, 2000);
+    return () => clearTimeout(timer);
+  }, [job, load]);
+
+  if (!id) return <p>No job ID provided.</p>;
   if (error) return <p className="text-red-500">{error}</p>;
   if (!job) return <p className="text-(--color-text-secondary)">Loading…</p>;
 
   const m = job.metadata;
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-6 flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{m?.title || "Job"}</h1>
-          {m?.composer && <p className="text-(--color-text-secondary)">{m.composer}</p>}
+    <div className="space-y-6">
+      <Link
+        href="/"
+        className="text-(--color-accent) hover:underline text-sm"
+      >
+        ← Back to jobs
+      </Link>
+
+      <div className="flex flex-col sm:flex-row gap-6">
+        {/* Thumbnail */}
+        {m?.thumbnail_url && (
+          <img
+            src={m.thumbnail_url}
+            alt=""
+            className="w-48 h-auto rounded-lg border border-(--color-border) object-contain"
+          />
+        )}
+
+        {/* Header */}
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold">
+            {m?.title || job.url}
+          </h1>
+          {m?.composer && (
+            <p className="text-lg text-(--color-text-secondary)">
+              {m.composer}
+            </p>
+          )}
+          <StatusBadge status={job.status} />
         </div>
-        <StatusBadge status={job.status} />
       </div>
 
-      {m?.thumbnail_url && (
-        <img src={m.thumbnail_url} alt="" className="mb-6 h-48 rounded-lg object-contain" />
-      )}
-
-      <dl className="mb-6 grid grid-cols-2 gap-4 text-sm">
-        {m?.arranger && <Field label="Arranger" value={m.arranger} />}
-        {m?.instruments?.length ? <Field label="Instruments" value={m.instruments.join(", ")} /> : null}
-        {m?.pages ? <Field label="Pages" value={String(m.pages)} /> : null}
-        <Field label="URL" value={job.url} link={job.url} />
-        <Field label="Created" value={new Date(job.created_at).toLocaleString()} />
-        <Field label="Status" value={job.status} />
-        {m?.description && (
-          <div className="col-span-2">
-            <dt className="font-medium text-(--color-text-secondary)">Description</dt>
-            <dd className="mt-1">{m.description}</dd>
-          </div>
-        )}
-      </dl>
-
-      {job.status === "completed" && (
-        <a
-          href={pdfUrl(job.id)}
-          download
-          className="inline-block rounded-lg bg-(--color-accent) px-6 py-2.5 text-sm font-medium text-white hover:bg-(--color-accent-hover)"
-        >
-          Download PDF
-        </a>
-      )}
-
-      {job.status === "failed" && job.error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+      {/* Error */}
+      {job.error && (
+        <div className="p-4 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800">
           {job.error}
         </div>
       )}
 
-      {(job.status === "queued" || job.status === "processing") && (
-        <p className="text-sm text-(--color-text-secondary) animate-pulse">
-          {job.status === "queued" ? "Waiting in queue…" : "Processing…"}
-        </p>
+      {/* Metadata grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+        {m?.arranger && (
+          <div>
+            <span className="font-medium">Arranger:</span>{" "}
+            <span className="text-(--color-text-secondary)">{m.arranger}</span>
+          </div>
+        )}
+        {m?.instruments && m.instruments.length > 0 && (
+          <div>
+            <span className="font-medium">Instruments:</span>{" "}
+            <span className="text-(--color-text-secondary)">
+              {m.instruments.join(", ")}
+            </span>
+          </div>
+        )}
+        <div>
+          <span className="font-medium">Pages:</span>{" "}
+          <span className="text-(--color-text-secondary)">
+            {job.pages || m?.pages || "—"}
+          </span>
+        </div>
+        <div>
+          <span className="font-medium">URL:</span>{" "}
+          <a
+            href={job.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-(--color-accent) hover:underline break-all"
+          >
+            {job.url}
+          </a>
+        </div>
+        <div>
+          <span className="font-medium">Created:</span>{" "}
+          <span className="text-(--color-text-secondary)">
+            {new Date(job.created_at).toLocaleString()}
+          </span>
+        </div>
+        {m?.description && (
+          <div className="sm:col-span-2">
+            <span className="font-medium">Description:</span>{" "}
+            <span className="text-(--color-text-secondary)">
+              {m.description}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Download */}
+      {job.status === "completed" && (
+        <a
+          href={pdfUrl(job.id)}
+          className="inline-block px-6 py-3 rounded-lg bg-(--color-accent) text-white font-medium hover:bg-(--color-accent-hover) transition-colors"
+        >
+          ⬇ Download PDF
+        </a>
       )}
     </div>
   );
 }
 
-function Field({ label, value, link }: { label: string; value: string; link?: string }) {
+export default function DetailPage() {
   return (
-    <div>
-      <dt className="font-medium text-(--color-text-secondary)">{label}</dt>
-      <dd className="mt-1 break-all">
-        {link ? <a href={link} target="_blank" rel="noopener noreferrer" className="text-(--color-accent) hover:underline">{value}</a> : value}
-      </dd>
-    </div>
-  );
-}
-
-export default function JobDetailPage() {
-  return (
-    <Suspense fallback={<p className="text-(--color-text-secondary)">Loading…</p>}>
-      <JobDetail />
+    <Suspense
+      fallback={
+        <p className="text-(--color-text-secondary)">Loading…</p>
+      }
+    >
+      <DetailContent />
     </Suspense>
   );
 }
