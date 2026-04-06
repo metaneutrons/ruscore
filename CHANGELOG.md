@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/metaneutrons/ruscore/compare/v1.1.0...v1.1.1) (2026-04-06)
+
+
+### Bug Fixes
+
+* **ci:** simplify Dockerfile, amd64-only Docker (Chrome has no ARM Linux) ([59d523a](https://github.com/metaneutrons/ruscore/commit/59d523afb2b6aaa881c41710ead7532d178c1b10))
+
 ## [1.1.0](https://github.com/metaneutrons/ruscore/compare/v1.0.0...v1.1.0) (2026-04-06)
 
 
