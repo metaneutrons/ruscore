@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/metaneutrons/ruscore/compare/v1.0.0...v1.1.0) (2026-04-06)
+
+
+### Features
+
+* **ci:** push Docker images to ghcr.io instead of Docker Hub ([ba9a797](https://github.com/metaneutrons/ruscore/commit/ba9a7976d4631c2b62ea7652620b5d4520c025fd))
+* PDF metadata embedding, detail view layout, screenshots ([c3c869f](https://github.com/metaneutrons/ruscore/commit/c3c869f70b0a7dd8d045dcc498a540e0113b0464))
+
 ## 1.0.0 (2026-04-06)
 
 
