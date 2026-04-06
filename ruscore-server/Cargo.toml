@@ -37,6 +37,9 @@ anyhow = "1.0.102"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
 
+# URL validation
+url = "2.5.8"
+
 # Temp files (for PDF generation)
 tempfile = "3.27.0"
 

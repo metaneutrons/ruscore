@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 // --- RFC 7807 Problem Details ---
 
+const PROBLEM_JSON: &str = "application/problem+json";
+
 #[derive(Serialize)]
 struct ProblemDetail {
     r#type: &'static str,
@@ -21,27 +23,35 @@ struct ProblemDetail {
 }
 
 impl ProblemDetail {
-    fn not_found(detail: impl Into<String>) -> (StatusCode, Json<Self>) {
-        (
-            StatusCode::NOT_FOUND,
-            Json(Self {
-                r#type: "about:blank",
-                title: "Not Found",
-                status: 404,
-                detail: detail.into(),
-            }),
-        )
+    fn response(status: StatusCode, title: &'static str, detail: impl Into<String>) -> Response {
+        let body = Self {
+            r#type: "about:blank",
+            title,
+            status: status.as_u16(),
+            detail: detail.into(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", HeaderValue::from_static(PROBLEM_JSON));
+        (status, headers, Json(body)).into_response()
     }
 
-    fn bad_request(detail: impl Into<String>) -> (StatusCode, Json<Self>) {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(Self {
-                r#type: "about:blank",
-                title: "Bad Request",
-                status: 400,
-                detail: detail.into(),
-            }),
+    fn not_found(detail: impl Into<String>) -> Response {
+        Self::response(StatusCode::NOT_FOUND, "Not Found", detail)
+    }
+
+    fn bad_request(detail: impl Into<String>) -> Response {
+        Self::response(StatusCode::BAD_REQUEST, "Bad Request", detail)
+    }
+
+    fn conflict(detail: impl Into<String>) -> Response {
+        Self::response(StatusCode::CONFLICT, "Conflict", detail)
+    }
+
+    fn unprocessable(detail: impl Into<String>) -> Response {
+        Self::response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Unprocessable Entity",
+            detail,
         )
     }
 }
@@ -75,9 +85,21 @@ pub struct SuggestParams {
     limit: Option<i64>,
 }
 
+#[derive(Serialize)]
+pub struct SuggestResult {
+    id: String,
+    title: String,
+    composer: String,
+}
+
 #[derive(Deserialize)]
 pub struct BatchDeleteRequest {
     ids: Vec<Uuid>,
+}
+
+#[derive(Serialize)]
+pub struct BatchDeleteResponse {
+    deleted: usize,
 }
 
 #[derive(Serialize)]
@@ -93,34 +115,42 @@ fn is_confirmed(headers: &HeaderMap) -> bool {
     headers.get(CONFIRM_HEADER).and_then(|v| v.to_str().ok()) == Some("yes")
 }
 
+/// Validate that the URL is a MuseScore score URL.
+fn validate_musescore_url(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("Invalid URL: {e}"))?;
+    match parsed.host_str() {
+        Some(h) if h == "musescore.com" || h.ends_with(".musescore.com") => {}
+        _ => return Err("URL must be a musescore.com score page".into()),
+    }
+    if !parsed.path().contains("/scores/") {
+        return Err("URL must point to a MuseScore score (path must contain /scores/)".into());
+    }
+    Ok(())
+}
+
 // --- Handlers ---
 
 /// POST /api/v1/jobs — submit a URL for conversion.
-/// Returns 202 with Location header, or 409 if URL already submitted.
 pub async fn create_job(
     State(state): State<AppState>,
     Json(req): Json<CreateJobRequest>,
 ) -> Result<Response, AppError> {
+    if let Err(msg) = validate_musescore_url(&req.url) {
+        return Ok(ProblemDetail::unprocessable(msg));
+    }
+
     let url_hash = hex_sha256(&req.url);
     let id = Uuid::new_v4();
 
     let existing = state.db.insert(id, &req.url, &url_hash)?;
 
     if let Some(job) = existing {
-        let mut headers = HeaderMap::new();
-        headers.insert(
+        let mut resp = ProblemDetail::conflict(format!("URL already submitted as job {}", job.id));
+        resp.headers_mut().insert(
             "location",
             HeaderValue::from_str(&format!("/api/v1/jobs/{}", job.id)).unwrap(),
         );
-        return Ok((
-            StatusCode::CONFLICT,
-            headers,
-            Json(CreateJobResponse {
-                id: job.id,
-                status: job.status,
-            }),
-        )
-            .into_response());
+        return Ok(resp);
     }
 
     state.job_notify.notify_one();
@@ -160,9 +190,7 @@ pub async fn list_jobs(
 
     let total_pages = (list.total as f64 / per_page as f64).ceil() as i64;
 
-    // Build Link headers for pagination
     let mut links = Vec::new();
-    let base = build_list_url(&params, 1, per_page);
     if page > 1 {
         links.push(format!(
             "<{}>; rel=\"prev\"",
@@ -175,7 +203,10 @@ pub async fn list_jobs(
             build_list_url(&params, page + 1, per_page)
         ));
     }
-    links.push(format!("<{}>; rel=\"first\"", base));
+    links.push(format!(
+        "<{}>; rel=\"first\"",
+        build_list_url(&params, 1, per_page)
+    ));
     links.push(format!(
         "<{}>; rel=\"last\"",
         build_list_url(&params, total_pages.max(1), per_page)
@@ -193,10 +224,30 @@ pub async fn list_jobs(
 pub async fn suggest(
     State(state): State<AppState>,
     Query(params): Query<SuggestParams>,
-) -> Result<Json<Vec<serde_json::Value>>, AppError> {
-    let results = state
+) -> Result<Json<Vec<SuggestResult>>, AppError> {
+    let rows = state
         .db
         .suggest(&params.q, params.limit.unwrap_or(5).clamp(1, 20))?;
+    let results = rows
+        .into_iter()
+        .map(|v| SuggestResult {
+            id: v
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            title: v
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            composer: v
+                .get("composer")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        })
+        .collect();
     Ok(Json(results))
 }
 
@@ -207,7 +258,7 @@ pub async fn get_job(
 ) -> Result<Response, AppError> {
     match state.db.get(id)? {
         Some(job) => Ok(Json(job).into_response()),
-        None => Ok(ProblemDetail::not_found(format!("Job {id} not found")).into_response()),
+        None => Ok(ProblemDetail::not_found(format!("Job {id} not found"))),
     }
 }
 
@@ -217,14 +268,16 @@ pub async fn get_pdf(
     Path(id): Path<Uuid>,
 ) -> Result<Response, AppError> {
     let job = match state.db.get(id)? {
-        Some(j) if j.status == JobStatus::Completed => j,
-        Some(_) => {
-            return Ok(
-                ProblemDetail::not_found("PDF not ready — job is still processing").into_response(),
-            );
-        }
-        None => return Ok(ProblemDetail::not_found(format!("Job {id} not found")).into_response()),
+        Some(j) => j,
+        None => return Ok(ProblemDetail::not_found(format!("Job {id} not found"))),
     };
+
+    if job.status != JobStatus::Completed {
+        return Ok(ProblemDetail::conflict(format!(
+            "PDF not ready — job status is '{:?}'",
+            job.status
+        )));
+    }
 
     match state.db.get_pdf(id)? {
         Some(bytes) => {
@@ -250,44 +303,40 @@ pub async fn get_pdf(
 
             Ok((StatusCode::OK, headers, bytes).into_response())
         }
-        None => Ok(ProblemDetail::not_found("PDF data not found").into_response()),
+        None => Ok(ProblemDetail::not_found("PDF data not found")),
     }
 }
 
 /// DELETE /api/v1/jobs/:id — delete a single job.
-/// Requires X-Confirm: yes header.
 pub async fn delete_job(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     if !is_confirmed(&headers) {
-        return Ok(
-            ProblemDetail::bad_request("Set header 'X-Confirm: yes' to confirm deletion")
-                .into_response(),
-        );
+        return Ok(ProblemDetail::bad_request(
+            "Set header 'X-Confirm: yes' to confirm deletion",
+        ));
     }
     match state.db.delete(id)? {
         true => Ok(StatusCode::NO_CONTENT.into_response()),
-        false => Ok(ProblemDetail::not_found(format!("Job {id} not found")).into_response()),
+        false => Ok(ProblemDetail::not_found(format!("Job {id} not found"))),
     }
 }
 
 /// POST /api/v1/jobs/batch/delete — bulk delete jobs.
-/// Requires X-Confirm: yes header.
 pub async fn batch_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(body): Json<BatchDeleteRequest>,
 ) -> Result<Response, AppError> {
     if !is_confirmed(&headers) {
-        return Ok(
-            ProblemDetail::bad_request("Set header 'X-Confirm: yes' to confirm deletion")
-                .into_response(),
-        );
+        return Ok(ProblemDetail::bad_request(
+            "Set header 'X-Confirm: yes' to confirm deletion",
+        ));
     }
     let deleted = state.db.delete_many(&body.ids)?;
-    Ok(Json(serde_json::json!({"deleted": deleted})).into_response())
+    Ok(Json(BatchDeleteResponse { deleted }).into_response())
 }
 
 /// GET /health
@@ -302,16 +351,11 @@ pub struct AppError(anyhow::Error);
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         tracing::error!("Request error: {:#}", self.0);
-        (
+        ProblemDetail::response(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ProblemDetail {
-                r#type: "about:blank",
-                title: "Internal Server Error",
-                status: 500,
-                detail: self.0.to_string(),
-            }),
+            "Internal Server Error",
+            self.0.to_string(),
         )
-            .into_response()
     }
 }
 
@@ -336,16 +380,24 @@ fn hex_sha256(input: &str) -> String {
 fn build_list_url(params: &ListParams, page: i64, per_page: i64) -> String {
     let mut parts = vec![format!("page={page}"), format!("per_page={per_page}")];
     if let Some(ref s) = params.status {
-        parts.push(format!("status={s}"));
+        parts.push(format!("status={}", urlencoded(s)));
     }
     if let Some(ref s) = params.sort {
-        parts.push(format!("sort={s}"));
+        parts.push(format!("sort={}", urlencoded(s)));
     }
     if let Some(ref o) = params.order {
-        parts.push(format!("order={o}"));
+        parts.push(format!("order={}", urlencoded(o)));
     }
     if let Some(ref q) = params.q {
-        parts.push(format!("q={q}"));
+        parts.push(format!("q={}", urlencoded(q)));
     }
     format!("/api/v1/jobs?{}", parts.join("&"))
+}
+
+fn urlencoded(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace('&', "%26")
+        .replace('=', "%3D")
+        .replace(' ', "%20")
+        .replace('+', "%2B")
 }

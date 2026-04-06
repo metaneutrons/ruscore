@@ -74,7 +74,7 @@ fn merge_pdfs(pdf_bytes_list: &[Vec<u8>]) -> Result<Document> {
 
         // Find the page object(s) in this document
         let doc_pages = doc.get_pages();
-        for (_, &page_id) in &doc_pages {
+        for &page_id in doc_pages.values() {
             page_refs.push(id_map[&page_id]);
         }
     }
