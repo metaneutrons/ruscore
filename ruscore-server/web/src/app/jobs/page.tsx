@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { fetchJobs } from "@/lib/api";
+import { fetchJobs, fetchSuggestions, Suggestion } from "@/lib/api";
 import { Job, JobStatus } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 
@@ -18,15 +18,29 @@ export default function JobsPage() {
   const [status, setStatus] = useState<JobStatus | "">("");
   const [sort, setSort] = useState<SortField>("created_at");
   const [order, setOrder] = useState<"asc" | "desc">("desc");
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Debounced suggest
+  useEffect(() => {
+    if (!search.trim()) { setSuggestions([]); return; }
+    const timer = setTimeout(() => {
+      fetchSuggestions(search).then(setSuggestions);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  // Fetch jobs when filters change
   useEffect(() => {
     setLoading(true);
-    fetchJobs(page, PER_PAGE, status || undefined, sort, order)
+    fetchJobs(page, PER_PAGE, status || undefined, sort, order, query || undefined)
       .then((data) => { setJobs(data.jobs); setTotal(data.total); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [page, status, sort, order]);
+  }, [page, status, sort, order, query]);
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
@@ -48,17 +62,52 @@ export default function JobsPage() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold">Jobs</h1>
-        <select
-          value={status}
-          onChange={(e) => { setStatus(e.target.value as JobStatus | ""); setPage(1); }}
-          className="rounded-lg border border-(--color-border) bg-(--color-bg-secondary) px-3 py-1.5 text-sm"
-        >
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>{s || "All statuses"}</option>
-          ))}
-        </select>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search scores…"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setShowSuggestions(true); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setQuery(search);
+                  setShowSuggestions(false);
+                  setPage(1);
+                }
+              }}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+              onFocus={() => { if (suggestions.length) setShowSuggestions(true); }}
+              className="w-56 rounded-lg border border-(--color-border) bg-(--color-bg-secondary) px-3 py-1.5 text-sm"
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <ul className="absolute z-10 mt-1 w-full rounded-lg border border-(--color-border) bg-(--color-bg) shadow-lg">
+                {suggestions.map((s) => (
+                  <li key={s.id}>
+                    <Link
+                      href={`/jobs/detail?id=${s.id}`}
+                      className="block px-3 py-2 text-sm hover:bg-(--color-bg-secondary)"
+                    >
+                      <span className="font-medium">{s.title || "Untitled"}</span>
+                      {s.composer && <span className="ml-2 text-(--color-text-secondary)">— {s.composer}</span>}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <select
+            value={status}
+            onChange={(e) => { setStatus(e.target.value as JobStatus | ""); setPage(1); }}
+            className="rounded-lg border border-(--color-border) bg-(--color-bg-secondary) px-3 py-1.5 text-sm"
+          >
+            {STATUSES.map((s) => (
+              <option key={s} value={s}>{s || "All statuses"}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {loading ? (

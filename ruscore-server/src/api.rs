@@ -85,6 +85,23 @@ pub async fn list_jobs(
     Ok(Json(list))
 }
 
+#[derive(Deserialize)]
+pub struct SuggestParams {
+    q: String,
+    limit: Option<i64>,
+}
+
+/// GET /api/v1/jobs/suggest — typeahead search suggestions.
+pub async fn suggest(
+    State(state): State<AppState>,
+    Query(params): Query<SuggestParams>,
+) -> Result<Json<Vec<serde_json::Value>>, AppError> {
+    let results = state
+        .db
+        .suggest(&params.q, params.limit.unwrap_or(5).clamp(1, 20))?;
+    Ok(Json(results))
+}
+
 /// GET /api/v1/jobs/:id — job status + metadata.
 pub async fn get_job(
     State(state): State<AppState>,

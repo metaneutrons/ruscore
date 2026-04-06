@@ -258,6 +258,28 @@ impl JobDb {
             .flatten())
     }
 
+    /// Lightweight FTS5 suggest — returns id, title, composer for typeahead.
+    pub fn suggest(&self, query: &str, limit: i64) -> Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock().unwrap();
+        let fts_query = format!("{}*", query.replace('"', "\"\""));
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.title, f.composer
+             FROM jobs_fts f
+             WHERE jobs_fts MATCH ?1
+             ORDER BY bm25(jobs_fts)
+             LIMIT ?2",
+        )?;
+        let results = stmt
+            .query_map(params![fts_query, limit], |row| {
+                let id: String = row.get(0)?;
+                let title: String = row.get(1)?;
+                let composer: String = row.get(2)?;
+                Ok(serde_json::json!({"id": id, "title": title, "composer": composer}))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(results)
+    }
+
     /// Delete jobs older than the given number of hours.
     #[allow(dead_code)]
     pub fn cleanup(&self, max_age_hours: i64) -> Result<usize> {

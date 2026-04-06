@@ -61,6 +61,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new()
         .route("/api/v1/jobs", post(api::create_job).get(api::list_jobs))
+        .route("/api/v1/jobs/suggest", get(api::suggest))
         .route("/api/v1/jobs/{id}", get(api::get_job))
         .route("/api/v1/jobs/{id}/pdf", get(api::get_pdf))
         .route("/health", get(api::health))
