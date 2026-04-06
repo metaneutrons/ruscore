@@ -132,6 +132,47 @@ pub async fn get_pdf(
     }
 }
 
+/// DELETE /api/v1/jobs/:id — delete a job (requires ?confirm=yes guard).
+pub async fn delete_job(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, AppError> {
+    if params.get("confirm").map(|v| v.as_str()) != Some("yes") {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "add ?confirm=yes to confirm deletion"})),
+        )
+            .into_response());
+    }
+    match state.db.delete(id)? {
+        true => Ok(StatusCode::NO_CONTENT.into_response()),
+        false => Ok(StatusCode::NOT_FOUND.into_response()),
+    }
+}
+
+/// DELETE /api/v1/jobs — bulk delete (requires ?confirm=yes guard).
+pub async fn delete_jobs(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<DeleteJobsRequest>,
+) -> Result<Response, AppError> {
+    if params.get("confirm").map(|v| v.as_str()) != Some("yes") {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "add ?confirm=yes to confirm deletion"})),
+        )
+            .into_response());
+    }
+    let deleted = state.db.delete_many(&body.ids)?;
+    Ok(Json(serde_json::json!({"deleted": deleted})).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct DeleteJobsRequest {
+    ids: Vec<Uuid>,
+}
+
 /// GET /health
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })

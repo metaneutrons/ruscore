@@ -258,6 +258,27 @@ impl JobDb {
             .flatten())
     }
 
+    /// Delete a job by ID. Returns true if deleted.
+    pub fn delete(&self, id: Uuid) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let id_str = id.to_string();
+        conn.execute("DELETE FROM jobs_fts WHERE id = ?1", params![id_str])?;
+        let rows = conn.execute("DELETE FROM jobs WHERE id = ?1", params![id_str])?;
+        Ok(rows > 0)
+    }
+
+    /// Delete multiple jobs by ID. Returns count deleted.
+    pub fn delete_many(&self, ids: &[Uuid]) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let mut deleted = 0;
+        for id in ids {
+            let id_str = id.to_string();
+            conn.execute("DELETE FROM jobs_fts WHERE id = ?1", params![id_str])?;
+            deleted += conn.execute("DELETE FROM jobs WHERE id = ?1", params![id_str])?;
+        }
+        Ok(deleted)
+    }
+
     /// Lightweight FTS5 suggest — returns id, title, composer for typeahead.
     pub fn suggest(&self, query: &str, limit: i64) -> Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();

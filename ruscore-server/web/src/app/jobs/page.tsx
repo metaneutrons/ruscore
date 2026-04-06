@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { fetchJobs, fetchSuggestions, Suggestion } from "@/lib/api";
+import { fetchJobs, fetchSuggestions, deleteJobs, Suggestion } from "@/lib/api";
 import { Job, JobStatus } from "@/lib/types";
 import { StatusBadge } from "@/components/status-badge";
 
@@ -23,6 +23,9 @@ export default function JobsPage() {
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   // Debounced suggest
   useEffect(() => {
@@ -36,11 +39,12 @@ export default function JobsPage() {
   // Fetch jobs when filters change
   useEffect(() => {
     setLoading(true);
+    setSelected(new Set());
     fetchJobs(page, PER_PAGE, status || undefined, sort, order, query || undefined)
       .then((data) => { setJobs(data.jobs); setTotal(data.total); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [page, status, sort, order, query]);
+  }, [page, status, sort, order, query, refreshKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
 
@@ -59,6 +63,34 @@ export default function JobsPage() {
       {sort === field ? (order === "asc" ? "▲" : "▼") : "⇅"}
     </span>
   );
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = () => {
+    if (selected.size === jobs.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(jobs.map((j) => j.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!confirm(`Delete ${selected.size} job(s)? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await deleteJobs([...selected]);
+      setSelected(new Set());
+      setRefreshKey((k) => k + 1);
+    } catch {}
+    setDeleting(false);
+  };
 
   return (
     <div>
@@ -107,6 +139,18 @@ export default function JobsPage() {
               <option key={s} value={s}>{s || "All statuses"}</option>
             ))}
           </select>
+          {selected.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              disabled={deleting}
+              className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              {deleting ? "Deleting…" : `Delete (${selected.size})`}
+            </button>
+          )}
         </div>
       </div>
 
@@ -119,6 +163,9 @@ export default function JobsPage() {
           <table className="w-full text-left text-sm">
             <thead className="bg-(--color-bg-secondary) text-xs uppercase text-(--color-text-secondary)">
               <tr>
+                <th className="w-8 px-2 py-3">
+                  <input type="checkbox" checked={selected.size === jobs.length && jobs.length > 0} onChange={toggleAll} className="rounded" />
+                </th>
                 <th className="cursor-pointer px-4 py-3" onClick={() => toggleSort("title")}>
                   Title<SortIcon field="title" />
                 </th>
@@ -139,6 +186,9 @@ export default function JobsPage() {
             <tbody className="divide-y divide-(--color-border)">
               {jobs.map((job) => (
                 <tr key={job.id} className="hover:bg-(--color-bg-secondary)">
+                  <td className="w-8 px-2 py-3">
+                    <input type="checkbox" checked={selected.has(job.id)} onChange={() => toggleSelect(job.id)} className="rounded" />
+                  </td>
                   <td className="px-4 py-3">
                     <Link href={`/jobs/detail?id=${job.id}`} className="flex items-center gap-3 hover:text-(--color-accent)">
                       {job.metadata?.thumbnail_url && (

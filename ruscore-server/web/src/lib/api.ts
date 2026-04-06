@@ -38,6 +38,22 @@ export function pdfUrl(id: string): string {
   return `${API}/jobs/${id}/pdf`;
 }
 
+export async function deleteJob(id: string): Promise<void> {
+  const res = await fetch(`${API}/jobs/${id}?confirm=yes`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to delete job: ${res.status}`);
+}
+
+export async function deleteJobs(ids: string[]): Promise<number> {
+  const res = await fetch(`${API}/jobs?confirm=yes`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  });
+  if (!res.ok) throw new Error(`Failed to delete jobs: ${res.status}`);
+  const data = await res.json();
+  return data.deleted;
+}
+
 export interface Suggestion {
   id: string;
   title: string;
