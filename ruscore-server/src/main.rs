@@ -76,6 +76,7 @@ async fn main() -> Result<()> {
             get(api::get_job).delete(api::delete_job),
         )
         .route("/api/v1/jobs/{id}/pdf", get(api::get_pdf))
+        .route("/api/v1/jobs/{id}/retry", post(api::retry_job))
         .route("/health", get(api::health))
         .fallback(embed::serve_static)
         .layer(CorsLayer::permissive())

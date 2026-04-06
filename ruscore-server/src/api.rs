@@ -380,6 +380,23 @@ pub struct CleanupParams {
     max_age_hours: Option<i64>,
 }
 
+/// POST /api/v1/jobs/:id/retry — retry a failed job.
+pub async fn retry_job(
+    State(state): State<AppState>,
+    id: Result<Path<Uuid>, PathRejection>,
+) -> Result<Response, AppError> {
+    let Path(id) = id.map_err(AppError::from)?;
+    match state.db.retry(id)? {
+        true => {
+            state.job_notify.notify_one();
+            Ok(Json(serde_json::json!({"id": id, "status": "queued"})).into_response())
+        }
+        false => Ok(ProblemDetail::not_found(
+            "Job not found or not in failed state",
+        )),
+    }
+}
+
 /// GET /health
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok" })

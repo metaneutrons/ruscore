@@ -50,6 +50,14 @@ export function pdfUrl(id: string): string {
   return `${API}/jobs/${id}/pdf`;
 }
 
+export async function deleteJob(id: string): Promise<void> {
+  const res = await fetch(`${API}/jobs/${id}`, {
+    method: "DELETE",
+    headers: { "X-Confirm": "yes" },
+  });
+  if (!res.ok) throw new Error(`Failed to delete job: ${res.status}`);
+}
+
 export async function deleteJobs(ids: string[]): Promise<number> {
   const res = await fetch(`${API}/jobs/batch/delete`, {
     method: "POST",
@@ -59,6 +67,11 @@ export async function deleteJobs(ids: string[]): Promise<number> {
   if (!res.ok) throw new Error(`Failed to delete jobs: ${res.status}`);
   const data = await res.json();
   return data.deleted;
+}
+
+export async function retryJob(id: string): Promise<void> {
+  const res = await fetch(`${API}/jobs/${id}/retry`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to retry job: ${res.status}`);
 }
 
 export async function fetchSuggestions(

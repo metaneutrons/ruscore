@@ -269,6 +269,16 @@ impl JobDb {
         Ok(count)
     }
 
+    /// Reset a failed job back to queued for retry.
+    pub fn retry(&self, id: Uuid) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE jobs SET status = 'queued', error = NULL, updated_at = datetime('now') WHERE id = ?1 AND status = 'failed'",
+            params![id.to_string()],
+        )?;
+        Ok(rows > 0)
+    }
+
     /// Delete a job by ID. Returns true if deleted.
     pub fn delete(&self, id: Uuid) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
