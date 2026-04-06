@@ -145,12 +145,20 @@ pub async fn create_job(
     let existing = state.db.insert(id, &req.url, &url_hash)?;
 
     if let Some(job) = existing {
-        let mut resp = ProblemDetail::conflict(format!("URL already submitted as job {}", job.id));
-        resp.headers_mut().insert(
+        let mut headers = HeaderMap::new();
+        headers.insert(
             "location",
             HeaderValue::from_str(&format!("/api/v1/jobs/{}", job.id)).unwrap(),
         );
-        return Ok(resp);
+        return Ok((
+            StatusCode::CONFLICT,
+            headers,
+            Json(CreateJobResponse {
+                id: job.id,
+                status: job.status,
+            }),
+        )
+            .into_response());
     }
 
     state.job_notify.notify_one();
