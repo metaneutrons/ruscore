@@ -1,0 +1,44 @@
+[package]
+name = "ruscore-server"
+description = "Web service for MuseScore score scraping and PDF conversion"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+ruscore-core = { path = "../ruscore-core" }
+
+# Web framework
+axum = { version = "0.8.8", features = ["json"] }
+tower-http = { version = "0.6.8", features = ["cors", "trace"] }
+
+# Async runtime
+tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros", "signal"] }
+
+# Job IDs
+uuid = { version = "1.23.0", features = ["v4", "serde"] }
+
+# SQLite job persistence
+rusqlite = { version = "0.39.0", features = ["bundled"] }
+
+# Redis PDF cache
+fred = { version = "10.1.0", features = ["enable-native-tls"] }
+
+# URL hashing for cache keys
+sha2 = "0.11.0"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.149"
+
+# Error handling
+anyhow = "1.0.102"
+
+# Logging
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["fmt", "env-filter"] }
+
+# Temp files (for PDF generation)
+tempfile = "3.27.0"

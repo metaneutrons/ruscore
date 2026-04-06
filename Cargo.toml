@@ -1,5 +1,5 @@
 [workspace]
-members = ["ruscore-core", "ruscore-cli"]
+members = ["ruscore-core", "ruscore-cli", "ruscore-server"]
 resolver = "3"
 
 [workspace.package]
