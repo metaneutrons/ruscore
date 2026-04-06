@@ -6,10 +6,13 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use tracing::{debug, info};
 
-use crate::ScorePages;
+use crate::{ScoreMetadata, ScorePages};
 
-/// Convert scored SVG pages to a single merged PDF file.
-pub fn generate(pages: &ScorePages, output: &Path) -> Result<()> {
+/// ruscore version (from Cargo.toml via env at compile time).
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Convert scored SVG pages to a single merged PDF file with embedded metadata.
+pub fn generate(pages: &ScorePages, metadata: &ScoreMetadata, output: &Path) -> Result<()> {
     info!("Converting {} SVGs to PDF...", pages.len());
 
     let options = usvg::Options::default();
@@ -31,11 +34,14 @@ pub fn generate(pages: &ScorePages, output: &Path) -> Result<()> {
     }
 
     if pdf_docs.len() == 1 {
-        std::fs::write(output, &pdf_docs[0])
+        let mut doc = Document::load_mem(&pdf_docs[0]).context("failed to parse generated PDF")?;
+        set_pdf_metadata(&mut doc, metadata);
+        doc.save(output)
             .with_context(|| format!("failed to write {}", output.display()))?;
     } else {
         info!("Merging {} pages...", pdf_docs.len());
         let mut merged = merge_pdfs(&pdf_docs)?;
+        set_pdf_metadata(&mut merged, metadata);
         merged
             .save(output)
             .with_context(|| format!("failed to write {}", output.display()))?;
@@ -43,6 +49,57 @@ pub fn generate(pages: &ScorePages, output: &Path) -> Result<()> {
 
     info!("Wrote {} ({} pages)", output.display(), pages.len());
     Ok(())
+}
+
+/// Embed score metadata + ruscore producer info into the PDF Info dictionary.
+fn set_pdf_metadata(doc: &mut Document, metadata: &ScoreMetadata) {
+    let mut info = lopdf::Dictionary::new();
+
+    if !metadata.title.is_empty() {
+        info.set("Title", Object::string_literal(metadata.title.as_bytes()));
+    }
+    if !metadata.composer.is_empty() {
+        info.set(
+            "Author",
+            Object::string_literal(metadata.composer.as_bytes()),
+        );
+    }
+
+    let mut subject_parts = Vec::new();
+    if !metadata.arranger.is_empty() {
+        subject_parts.push(format!("Arranged by {}", metadata.arranger));
+    }
+    if !metadata.instruments.is_empty() {
+        subject_parts.push(metadata.instruments.join(", "));
+    }
+    if !subject_parts.is_empty() {
+        info.set(
+            "Subject",
+            Object::string_literal(subject_parts.join(" — ").as_bytes()),
+        );
+    }
+
+    if !metadata.description.is_empty() {
+        info.set(
+            "Keywords",
+            Object::string_literal(metadata.description.as_bytes()),
+        );
+    }
+
+    info.set(
+        "Creator",
+        Object::string_literal(
+            format!("ruscore v{VERSION} — https://github.com/metaneutrons/ruscore").as_bytes(),
+        ),
+    );
+    info.set(
+        "Producer",
+        Object::string_literal(format!("ruscore v{VERSION} (svg2pdf + lopdf)").as_bytes()),
+    );
+
+    let info_id = doc.new_object_id();
+    doc.objects.insert(info_id, Object::Dictionary(info));
+    doc.trailer.set("Info", Object::Reference(info_id));
 }
 
 /// Merge multiple single-page PDFs into one document.

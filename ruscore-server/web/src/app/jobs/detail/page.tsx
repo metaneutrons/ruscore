@@ -54,89 +54,80 @@ function DetailContent() {
           <img
             src={m.thumbnail_url}
             alt=""
-            className="w-48 h-auto rounded-lg border border-(--color-border) object-contain"
+            className="w-48 h-auto rounded-lg border border-(--color-border) object-contain shrink-0"
           />
         )}
 
-        {/* Header */}
-        <div className="space-y-2">
-          <h1 className="text-2xl font-bold">
-            {m?.title || job.url}
-          </h1>
-          {m?.composer && (
-            <p className="text-lg text-(--color-text-secondary)">
-              {m.composer}
+        {/* Header + metadata side by side with thumbnail */}
+        <div className="flex-1 space-y-4">
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <h1 className="text-2xl font-bold">{m?.title || job.url}</h1>
+              <StatusBadge status={job.status} />
+            </div>
+            {m?.composer && (
+              <p className="text-lg text-(--color-text-secondary)">{m.composer}</p>
+            )}
+          </div>
+
+          {/* Error */}
+          {job.error && (
+            <div className="p-3 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 text-sm">
+              {job.error}
+            </div>
+          )}
+
+          {/* Metadata grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+            {m?.arranger && (
+              <div>
+                <span className="font-medium">Arranger:</span>{" "}
+                <span className="text-(--color-text-secondary)">{m.arranger}</span>
+              </div>
+            )}
+            {m?.instruments && m.instruments.length > 0 && (
+              <div>
+                <span className="font-medium">Instruments:</span>{" "}
+                <span className="text-(--color-text-secondary)">{m.instruments.join(", ")}</span>
+              </div>
+            )}
+            <div>
+              <span className="font-medium">Pages:</span>{" "}
+              <span className="text-(--color-text-secondary)">{job.pages || m?.pages || "—"}</span>
+            </div>
+            <div>
+              <span className="font-medium">Created:</span>{" "}
+              <span className="text-(--color-text-secondary)">{new Date(job.created_at).toLocaleString()}</span>
+            </div>
+            <div className="sm:col-span-2">
+              <span className="font-medium">URL:</span>{" "}
+              <a href={job.url} target="_blank" rel="noopener noreferrer" className="text-(--color-accent) hover:underline break-all">{job.url}</a>
+            </div>
+            {m?.description && (
+              <div className="sm:col-span-2">
+                <span className="font-medium">Description:</span>{" "}
+                <span className="text-(--color-text-secondary)">{m.description}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Download */}
+          {job.status === "completed" && (
+            <a
+              href={pdfUrl(job.id)}
+              className="inline-block px-6 py-3 rounded-lg bg-(--color-accent) text-white font-medium hover:bg-(--color-accent-hover) transition-colors"
+            >
+              ⬇ Download PDF
+            </a>
+          )}
+
+          {(job.status === "queued" || job.status === "processing") && (
+            <p className="text-sm text-(--color-text-secondary) animate-pulse">
+              {job.status === "queued" ? "Waiting in queue…" : "Converting score…"}
             </p>
           )}
-          <StatusBadge status={job.status} />
         </div>
       </div>
-
-      {/* Error */}
-      {job.error && (
-        <div className="p-4 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800">
-          {job.error}
-        </div>
-      )}
-
-      {/* Metadata grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-        {m?.arranger && (
-          <div>
-            <span className="font-medium">Arranger:</span>{" "}
-            <span className="text-(--color-text-secondary)">{m.arranger}</span>
-          </div>
-        )}
-        {m?.instruments && m.instruments.length > 0 && (
-          <div>
-            <span className="font-medium">Instruments:</span>{" "}
-            <span className="text-(--color-text-secondary)">
-              {m.instruments.join(", ")}
-            </span>
-          </div>
-        )}
-        <div>
-          <span className="font-medium">Pages:</span>{" "}
-          <span className="text-(--color-text-secondary)">
-            {job.pages || m?.pages || "—"}
-          </span>
-        </div>
-        <div>
-          <span className="font-medium">URL:</span>{" "}
-          <a
-            href={job.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-(--color-accent) hover:underline break-all"
-          >
-            {job.url}
-          </a>
-        </div>
-        <div>
-          <span className="font-medium">Created:</span>{" "}
-          <span className="text-(--color-text-secondary)">
-            {new Date(job.created_at).toLocaleString()}
-          </span>
-        </div>
-        {m?.description && (
-          <div className="sm:col-span-2">
-            <span className="font-medium">Description:</span>{" "}
-            <span className="text-(--color-text-secondary)">
-              {m.description}
-            </span>
-          </div>
-        )}
-      </div>
-
-      {/* Download */}
-      {job.status === "completed" && (
-        <a
-          href={pdfUrl(job.id)}
-          className="inline-block px-6 py-3 rounded-lg bg-(--color-accent) text-white font-medium hover:bg-(--color-accent-hover) transition-colors"
-        >
-          ⬇ Download PDF
-        </a>
-      )}
     </div>
   );
 }

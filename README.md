@@ -8,6 +8,14 @@
 
 **Scrape MuseScore sheet music and convert to high-quality vector PDF.**
 
+<p align="center">
+  <img src="assets/ruscore-web-ui.png" alt="ruscore web interface" width="700" />
+</p>
+
+<p align="center">
+  <img src="assets/ruscore-job-detail.png" alt="ruscore job detail view" width="700" />
+</p>
+
 ruscore navigates MuseScore score pages using a real Chrome instance via CDP (Chrome DevTools Protocol), captures all SVG pages through network interception, extracts rich metadata, and generates multi-page vector PDFs — all without triggering Cloudflare bot detection.
 
 <p align="center">
@@ -23,12 +31,14 @@ ruscore navigates MuseScore score pages using a real Chrome instance via CDP (Ch
 
 ## ✨ Features
 
-- **Vector PDF output** — SVGs converted via `usvg` + `svg2pdf`, not rasterized screenshots
+- **Vector PDF output** — SVGs converted via `usvg` + `svg2pdf` + `lopdf`, not rasterized screenshots
+- **PDF metadata** — title, composer, arranger, instruments embedded in PDF Info dictionary
 - **Cloudflare bypass** — raw CDP WebSocket, no `Page.enable`, no `navigator.webdriver` flag
 - **Rich metadata extraction** — title, composer, arranger, instruments, description from JSON-LD
-- **Full-text search** — SQLite FTS5 with BM25 ranking, prefix matching, phrase search
-- **Web service** — REST API with job queue, paginated listing, typeahead search
-- **Embedded frontend** — Next.js 15 + Tailwind v4, baked into a single binary via `rust-embed`
+- **Full-text search** — SQLite FTS5 with BM25 ranking, prefix matching, phrase search, typeahead
+- **Web service** — REST API (RFC 7807 errors, pagination Link headers, URL validation)
+- **Job queue** — persistent Chrome session, retry with backoff, per-job timeout, stale recovery
+- **Embedded frontend** — Next.js 15 + Tailwind v4 SPA, baked into a single binary via `rust-embed`
 - **Cross-platform** — macOS, Windows, Linux (x86-64 & ARM64)
 - **Docker ready** — Chrome + Xvfb in a single container, multi-arch images
 
@@ -45,7 +55,7 @@ ruscore/
 | Component | Technology |
 |-----------|-----------|
 | CDP client | Raw WebSocket (`tokio-tungstenite`) — no automation detection |
-| PDF engine | `usvg` + `svg2pdf` + `pdf-writer` — pure Rust, vector output |
+| PDF engine | `usvg` + `svg2pdf` + `lopdf` — pure Rust, vector output |
 | Web framework | `axum` + `tower-http` |
 | Database | SQLite (`rusqlite`) — jobs, metadata, PDF blobs, FTS5 search |
 | Frontend | Next.js 15, Tailwind CSS v4, TypeScript — static export |
@@ -85,6 +95,9 @@ docker compose up --build
 | `GET` | `/api/v1/jobs/suggest?q=` | Typeahead search suggestions |
 | `GET` | `/api/v1/jobs/:id` | Job status + metadata |
 | `GET` | `/api/v1/jobs/:id/pdf` | Download generated PDF |
+| `DELETE` | `/api/v1/jobs/:id` | Delete a job (requires `X-Confirm: yes` header) |
+| `POST` | `/api/v1/jobs/batch/delete` | Bulk delete jobs (requires `X-Confirm: yes` header) |
+| `POST` | `/api/v1/jobs/cleanup?max_age_hours=24` | Delete old jobs (requires `X-Confirm: yes` header) |
 | `GET` | `/health` | Health check |
 
 ### Query Parameters for `GET /api/v1/jobs`
@@ -97,6 +110,15 @@ docker compose up --build
 | `order` | `asc` | Sort direction: `asc`, `desc` |
 | `page` | `1` | Page number |
 | `per_page` | `20` | Items per page (max 100) |
+
+### API Design
+
+- **RFC 7807** Problem Details on all errors (`application/problem+json`)
+- **Location** header on `202 Accepted` and `409 Conflict`
+- **Link** headers for pagination (`rel=next/prev/first/last`)
+- **URL validation** — rejects non-musescore.com URLs with `422`
+- **Confirmation guard** — destructive operations require `X-Confirm: yes` header
+- **Content-Length** + title-based filename on PDF downloads
 
 ## ⚙️ Configuration
 
@@ -114,8 +136,18 @@ docker compose up --build
 4. **Wait** for the score viewer to render (React hydration)
 5. **Fire-and-forget scroll** inside the browser to trigger lazy loading
 6. **Intercept SVGs** via `Network.responseReceived` + `Network.getResponseBody` (S3 presigned URLs)
-7. **Convert to PDF** using `usvg` → `svg2pdf::to_chunk()` → `pdf-writer` (vector, not rasterized)
-8. **Extract metadata** from `<script type="application/ld+json">` (MusicComposition schema.org)
+7. **Convert to PDF** using `usvg` → `svg2pdf::to_pdf()` → `lopdf` merge (vector, not rasterized)
+8. **Embed metadata** — title, composer, arranger, instruments in PDF Info dictionary
+9. **Extract metadata** from `<script type="application/ld+json">` (MusicComposition schema.org)
+
+### Resilience
+
+- **Persistent Chrome** — session reused across jobs, Cloudflare `cf_clearance` cookie persists
+- **Retry with backoff** — Cloudflare blocks and Chrome crashes trigger restart + retry (up to 3×)
+- **Per-job timeout** — 5 minutes, kills Chrome if stuck
+- **Stale recovery** — on startup, resets orphaned "processing" jobs back to "queued"
+- **Chrome recycling** — proactive restart every 50 jobs to prevent memory leaks
+- **SQLite WAL mode** — concurrent reads during worker writes
 
 ## 🐳 Docker Details
 

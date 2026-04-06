@@ -156,7 +156,7 @@ async fn process_job(
     let page_count = pages.len();
 
     let tmp = tempfile::NamedTempFile::new()?;
-    ruscore_core::pdf::generate(&pages, tmp.path())?;
+    ruscore_core::pdf::generate(&pages, &metadata, tmp.path())?;
     let pdf_bytes = std::fs::read(tmp.path())?;
 
     Ok((metadata, page_count, pdf_bytes))

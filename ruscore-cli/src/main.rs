@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
         metadata.pages
     );
 
-    ruscore_core::pdf::generate(&pages, &cli.output)?;
+    ruscore_core::pdf::generate(&pages, &metadata, &cli.output)?;
     chrome.shutdown();
     Ok(())
 }
