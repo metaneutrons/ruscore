@@ -21,15 +21,6 @@ pub enum JobStatus {
 }
 
 impl JobStatus {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Queued => "queued",
-            Self::Processing => "processing",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-        }
-    }
-
     fn from_str(s: &str) -> Self {
         match s {
             "queued" => Self::Queued,
