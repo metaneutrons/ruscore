@@ -51,6 +51,8 @@ EOF
 ENV RUSCORE_PORT=3000
 ENV RUSCORE_DATA_DIR=/home/ruscore/data
 
+VOLUME /home/ruscore/data
+
 EXPOSE 3000
 
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s \
