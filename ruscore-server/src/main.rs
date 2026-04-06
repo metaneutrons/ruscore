@@ -61,13 +61,9 @@ async fn main() -> Result<()> {
     use axum::routing::{get, post};
 
     let app = Router::new()
-        .route(
-            "/api/v1/jobs",
-            post(api::create_job)
-                .get(api::list_jobs)
-                .delete(api::delete_jobs),
-        )
+        .route("/api/v1/jobs", post(api::create_job).get(api::list_jobs))
         .route("/api/v1/jobs/suggest", get(api::suggest))
+        .route("/api/v1/jobs/batch/delete", post(api::batch_delete))
         .route(
             "/api/v1/jobs/{id}",
             get(api::get_job).delete(api::delete_job),

@@ -39,14 +39,17 @@ export function pdfUrl(id: string): string {
 }
 
 export async function deleteJob(id: string): Promise<void> {
-  const res = await fetch(`${API}/jobs/${id}?confirm=yes`, { method: "DELETE" });
+  const res = await fetch(`${API}/jobs/${id}`, {
+    method: "DELETE",
+    headers: { "X-Confirm": "yes" },
+  });
   if (!res.ok) throw new Error(`Failed to delete job: ${res.status}`);
 }
 
 export async function deleteJobs(ids: string[]): Promise<number> {
-  const res = await fetch(`${API}/jobs?confirm=yes`, {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
+  const res = await fetch(`${API}/jobs/batch/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Confirm": "yes" },
     body: JSON.stringify({ ids }),
   });
   if (!res.ok) throw new Error(`Failed to delete jobs: ${res.status}`);
