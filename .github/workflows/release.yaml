@@ -35,16 +35,7 @@ jobs:
     name: Docker (${{ matrix.platform }})
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            runner: ubuntu-latest
-            suffix: amd64
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            suffix: arm64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -59,35 +50,10 @@ jobs:
       - uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ needs.release-please.outputs.version }}-${{ matrix.suffix }}
-          cache-from: type=gha,scope=${{ matrix.suffix }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.suffix }}
-
-  docker-manifest:
-    name: Docker Manifest
-    needs: [release-please, docker]
-    if: needs.release-please.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create multi-arch manifest
-        env:
-          IMAGE: ghcr.io/${{ github.repository }}
-          VERSION: ${{ needs.release-please.outputs.version }}
-        run: |
-          docker manifest create $IMAGE:$VERSION \
-            $IMAGE:$VERSION-amd64 \
-            $IMAGE:$VERSION-arm64
-          docker manifest create $IMAGE:latest \
-            $IMAGE:$VERSION-amd64 \
-            $IMAGE:$VERSION-arm64
-          docker manifest push $IMAGE:$VERSION
-          docker manifest push $IMAGE:latest
+            ${{ env.IMAGE }}:${{ needs.release-please.outputs.version }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

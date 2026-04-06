@@ -12,21 +12,8 @@ RUN npm run build
 FROM rust:1.85-bookworm AS builder
 WORKDIR /app
 
-# Cache dependencies
-COPY Cargo.toml Cargo.lock ./
-COPY ruscore-core/Cargo.toml ruscore-core/Cargo.toml
-COPY ruscore-cli/Cargo.toml ruscore-cli/Cargo.toml
-COPY ruscore-server/Cargo.toml ruscore-server/Cargo.toml
-RUN mkdir -p ruscore-core/src ruscore-cli/src ruscore-server/src \
-    && echo "pub fn dummy() {}" > ruscore-core/src/lib.rs \
-    && echo "fn main() {}" > ruscore-cli/src/main.rs \
-    && echo "fn main() {}" > ruscore-server/src/main.rs \
-    && cargo build --release --bin ruscore-server 2>/dev/null || true
-
-# Copy real source + built frontend
-COPY ruscore-core/ ruscore-core/
-COPY ruscore-cli/ ruscore-cli/
-COPY ruscore-server/src/ ruscore-server/src/
+# Copy everything and build
+COPY . .
 COPY --from=frontend /app/ruscore-server/web/out/ ruscore-server/web/out/
 RUN cargo build --release --bin ruscore-server
 
@@ -55,16 +42,13 @@ WORKDIR /home/ruscore
 COPY --chmod=755 <<'EOF' /usr/local/bin/entrypoint.sh
 #!/bin/bash
 set -e
-# Start Xvfb on display :99
 Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp &
 export DISPLAY=:99
-# Wait for Xvfb
 sleep 1
 exec ruscore-server
 EOF
 
 ENV RUSCORE_PORT=3000
-ENV RUSCORE_REDIS_URL=redis://redis:6379
 ENV RUSCORE_DATA_DIR=/home/ruscore/data
 
 EXPOSE 3000
