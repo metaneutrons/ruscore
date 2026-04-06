@@ -342,12 +342,16 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
         composer
     };
 
-    // Strip common prefixes from composer
-    let composer = composer
-        .strip_prefix("Written by ")
-        .or_else(|| composer.strip_prefix("Words & Music by "))
-        .unwrap_or(&composer)
-        .to_string();
+    // Strip common prefixes from composer (case-insensitive)
+    let composer = {
+        let lower = composer.to_lowercase();
+        let prefixes = ["written by ", "words & music by ", "composed by "];
+        let stripped = prefixes
+            .iter()
+            .find(|p| lower.starts_with(*p))
+            .map(|p| composer[p.len()..].to_string());
+        stripped.unwrap_or(composer)
+    };
 
     Ok(ScoreMetadata {
         title,
