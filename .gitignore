@@ -1,11 +1,35 @@
+# Rust
 /target/
-/chrome_profile/
-/chrome_debug_profile/
-/score_svgs/
+
+# Node
+node_modules/
+ruscore-server/web/.next/
+ruscore-server/web/out/
+
+# Runtime data
+data/
 *.pdf
+
+# Chrome debug profiles
+chrome_profile/
+chrome_debug_profile/
+score_svgs/
+
+# Python (legacy scraper)
 __pycache__/
 *.pyc
-data/
-data/
-data/
-data/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# IDEs
+.idea/
+*.swp
+*.swo
