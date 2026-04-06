@@ -47,6 +47,10 @@ pub struct Job {
     pub metadata: Option<serde_json::Value>,
     /// Number of pages, populated on completion.
     pub pages: Option<i64>,
+    /// PDF binary data, populated on completion.
+    #[serde(skip)]
+    #[allow(dead_code)]
+    pub pdf_data: Option<Vec<u8>>,
     /// Error message if failed.
     pub error: Option<String>,
     /// ISO 8601 creation timestamp.
@@ -85,6 +89,7 @@ impl JobDb {
                 status TEXT NOT NULL DEFAULT 'queued',
                 metadata TEXT,
                 pages INTEGER,
+                pdf_data BLOB,
                 error TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now')),
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -158,12 +163,18 @@ impl JobDb {
         Ok(job)
     }
 
-    /// Mark a job as completed with metadata.
-    pub fn complete(&self, id: Uuid, metadata: &serde_json::Value, pages: i64) -> Result<()> {
+    /// Mark a job as completed with metadata and PDF.
+    pub fn complete(
+        &self,
+        id: Uuid,
+        metadata: &serde_json::Value,
+        pages: i64,
+        pdf_data: &[u8],
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE jobs SET status = 'completed', metadata = ?1, pages = ?2, updated_at = datetime('now') WHERE id = ?3",
-            params![metadata.to_string(), pages, id.to_string()],
+            "UPDATE jobs SET status = 'completed', metadata = ?1, pages = ?2, pdf_data = ?3, updated_at = datetime('now') WHERE id = ?4",
+            params![metadata.to_string(), pages, pdf_data, id.to_string()],
         )?;
         Ok(())
     }
@@ -176,6 +187,30 @@ impl JobDb {
             params![error, id.to_string()],
         )?;
         Ok(())
+    }
+
+    /// Get PDF bytes for a completed job.
+    pub fn get_pdf(&self, id: Uuid) -> Result<Option<Vec<u8>>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT pdf_data FROM jobs WHERE id = ?1 AND status = 'completed'",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten())
+    }
+
+    /// Delete jobs older than the given number of hours.
+    #[allow(dead_code)]
+    pub fn cleanup(&self, max_age_hours: i64) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let deleted = conn.execute(
+            "DELETE FROM jobs WHERE created_at < datetime('now', ?1)",
+            params![format!("-{max_age_hours} hours")],
+        )?;
+        Ok(deleted)
     }
 
     /// Paginated job list with optional status filter.
@@ -220,6 +255,7 @@ fn row_to_job(row: &rusqlite::Row) -> Job {
         status: JobStatus::from_str(&row.get_unwrap::<_, String>(3)),
         metadata: metadata_str.and_then(|s| serde_json::from_str(&s).ok()),
         pages: row.get_unwrap(5),
+        pdf_data: None, // Never loaded in list/get queries — use get_pdf() instead
         error: row.get_unwrap(6),
         created_at: row.get_unwrap(7),
         updated_at: row.get_unwrap(8),

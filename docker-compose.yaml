@@ -5,27 +5,11 @@ services:
       - "3000:3000"
     environment:
       - RUSCORE_PORT=3000
-      - RUSCORE_REDIS_URL=redis://redis:6379
       - RUSCORE_DATA_DIR=/home/ruscore/data
       - RUST_LOG=info
     volumes:
       - ruscore-data:/home/ruscore/data
-    depends_on:
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
     restart: unless-stopped
 
 volumes:
   ruscore-data:
-  redis-data:

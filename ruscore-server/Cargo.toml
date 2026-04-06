@@ -20,13 +20,10 @@ tokio = { version = "1.51.0", features = ["rt-multi-thread", "macros", "signal"]
 # Job IDs
 uuid = { version = "1.23.0", features = ["v4", "serde"] }
 
-# SQLite job persistence
+# SQLite — job persistence + PDF storage
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 
-# Redis PDF cache
-fred = { version = "10.1.0", features = ["enable-native-tls"] }
-
-# URL hashing for cache keys
+# URL hashing for dedup
 sha2 = "0.11.0"
 
 # Serialization

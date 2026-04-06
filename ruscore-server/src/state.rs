@@ -1,6 +1,5 @@
 //! Shared application state.
 
-use crate::cache::PdfCache;
 use crate::db::JobDb;
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -10,8 +9,6 @@ use tokio::sync::Notify;
 pub struct AppState {
     /// SQLite job database.
     pub db: Arc<JobDb>,
-    /// Redis PDF cache.
-    pub cache: Arc<PdfCache>,
     /// Notify the worker when a new job is queued.
     pub job_notify: Arc<Notify>,
 }

@@ -6,7 +6,6 @@
 #![warn(clippy::uninlined_format_args)]
 
 mod api;
-mod cache;
 mod db;
 mod embed;
 mod state;
@@ -23,7 +22,6 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 
-use crate::cache::PdfCache;
 use crate::db::JobDb;
 use crate::state::AppState;
 
@@ -40,8 +38,6 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| "3000".into())
         .parse()
         .context("invalid RUSCORE_PORT")?;
-    let redis_url =
-        std::env::var("RUSCORE_REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".into());
     let data_dir =
         PathBuf::from(std::env::var("RUSCORE_DATA_DIR").unwrap_or_else(|_| "./data".into()));
 
@@ -49,24 +45,20 @@ async fn main() -> Result<()> {
 
     let db_path = data_dir.join("ruscore.db");
     let db = Arc::new(JobDb::open(db_path.to_str().unwrap())?);
-    let cache = Arc::new(PdfCache::connect(&redis_url).await?);
     let job_notify = Arc::new(Notify::new());
 
     let state = AppState {
         db: Arc::clone(&db),
-        cache: Arc::clone(&cache),
         job_notify: Arc::clone(&job_notify),
     };
 
-    // Start background worker
+    // Background worker
     let worker_state = state.clone();
-    let worker_dir = data_dir.clone();
     let worker_notify = Arc::clone(&job_notify);
     tokio::spawn(async move {
-        worker::run(worker_state, worker_dir, worker_notify).await;
+        worker::run(worker_state, worker_notify).await;
     });
 
-    // Build router
     let app = Router::new()
         .route("/api/v1/jobs", post(api::create_job).get(api::list_jobs))
         .route("/api/v1/jobs/{id}", get(api::get_job))
