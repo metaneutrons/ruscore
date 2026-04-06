@@ -9,6 +9,10 @@ permissions:
   pull-requests: write
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
   release-please:
     name: Release Please
@@ -46,8 +50,9 @@ jobs:
 
       - uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/setup-buildx-action@v4
 
@@ -57,7 +62,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/ruscore:${{ needs.release-please.outputs.version }}-${{ matrix.suffix }}
+            ${{ env.IMAGE }}:${{ needs.release-please.outputs.version }}-${{ matrix.suffix }}
           cache-from: type=gha,scope=${{ matrix.suffix }}
           cache-to: type=gha,mode=max,scope=${{ matrix.suffix }}
 
@@ -69,19 +74,20 @@ jobs:
     steps:
       - uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create multi-arch manifest
         env:
-          REPO: ${{ secrets.DOCKERHUB_USERNAME }}/ruscore
+          IMAGE: ghcr.io/${{ github.repository }}
           VERSION: ${{ needs.release-please.outputs.version }}
         run: |
-          docker manifest create $REPO:$VERSION \
-            $REPO:$VERSION-amd64 \
-            $REPO:$VERSION-arm64
-          docker manifest create $REPO:latest \
-            $REPO:$VERSION-amd64 \
-            $REPO:$VERSION-arm64
-          docker manifest push $REPO:$VERSION
-          docker manifest push $REPO:latest
+          docker manifest create $IMAGE:$VERSION \
+            $IMAGE:$VERSION-amd64 \
+            $IMAGE:$VERSION-arm64
+          docker manifest create $IMAGE:latest \
+            $IMAGE:$VERSION-amd64 \
+            $IMAGE:$VERSION-arm64
+          docker manifest push $IMAGE:$VERSION
+          docker manifest push $IMAGE:latest

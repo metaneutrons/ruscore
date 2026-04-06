@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/metaneutrons/ruscore/actions/workflows/ci.yaml/badge.svg)](https://github.com/metaneutrons/ruscore/actions/workflows/ci.yaml)
 [![Release](https://github.com/metaneutrons/ruscore/actions/workflows/release.yaml/badge.svg)](https://github.com/metaneutrons/ruscore/actions/workflows/release.yaml)
-[![Docker](https://img.shields.io/docker/v/metaneutrons/ruscore?label=docker&sort=semver)](https://hub.docker.com/r/metaneutrons/ruscore)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io-blue)](https://github.com/metaneutrons/ruscore/pkgs/container/ruscore)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust: 1.85+](https://img.shields.io/badge/rust-1.85%2B%20(edition%202024)-orange.svg)](https://www.rust-lang.org)
 
@@ -125,7 +125,7 @@ The Docker image runs Chrome **headed** inside an Xvfb virtual framebuffer — t
 # docker-compose.yaml
 services:
   ruscore:
-    image: metaneutrons/ruscore:latest
+    image: ghcr.io/metaneutrons/ruscore:latest
     ports: ["3000:3000"]
     volumes: [ruscore-data:/home/ruscore/data]
 ```
