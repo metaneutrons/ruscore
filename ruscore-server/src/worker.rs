@@ -1,20 +1,23 @@
-//! Background worker — processes queued jobs sequentially with persistent Chrome.
+//! Background worker — processes queued jobs with persistent Chrome, retry, and recycling.
 
 use crate::state::AppState;
 use ruscore_core::chrome::Chrome;
 use std::sync::Arc;
 use tokio::sync::Notify;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, sleep, timeout};
 use tracing::{error, info, warn};
 
 const MAX_RETRIES: usize = 3;
 const RETRY_BACKOFF_SECS: u64 = 5;
+const JOB_TIMEOUT_SECS: u64 = 300; // 5 minutes per job
+const CHROME_RECYCLE_AFTER: usize = 50; // Restart Chrome every N jobs
 
 /// Run the background worker loop. Maintains a persistent Chrome instance.
 pub async fn run(state: AppState, notify: Arc<Notify>) {
     info!("Worker started.");
 
     let mut chrome: Option<Chrome> = None;
+    let mut jobs_since_recycle: usize = 0;
 
     loop {
         tokio::select! {
@@ -34,6 +37,15 @@ pub async fn run(state: AppState, notify: Arc<Notify>) {
 
             info!("Processing job {} ({})", job.id, job.url);
 
+            // Proactive Chrome recycling to prevent memory leaks
+            if jobs_since_recycle >= CHROME_RECYCLE_AFTER {
+                info!("Recycling Chrome after {jobs_since_recycle} jobs.");
+                if let Some(mut c) = chrome.take() {
+                    c.shutdown();
+                }
+                jobs_since_recycle = 0;
+            }
+
             let mut last_err = String::new();
             let mut succeeded = false;
 
@@ -41,7 +53,10 @@ pub async fn run(state: AppState, notify: Arc<Notify>) {
                 // Ensure Chrome is running
                 if chrome.is_none() {
                     match Chrome::start().await {
-                        Ok(c) => chrome = Some(c),
+                        Ok(c) => {
+                            chrome = Some(c);
+                            jobs_since_recycle = 0;
+                        }
                         Err(e) => {
                             last_err = format!("Chrome failed to start: {e:#}");
                             error!("{last_err}");
@@ -53,8 +68,14 @@ pub async fn run(state: AppState, notify: Arc<Notify>) {
 
                 let session = &mut chrome.as_mut().unwrap().session;
 
-                match process_job(session, &job.url).await {
-                    Ok((metadata, pages, pdf_bytes)) => {
+                // Per-job timeout to prevent hung jobs from blocking the queue
+                match timeout(
+                    Duration::from_secs(JOB_TIMEOUT_SECS),
+                    process_job(session, &job.url),
+                )
+                .await
+                {
+                    Ok(Ok((metadata, pages, pdf_bytes))) => {
                         let meta_json = serde_json::to_value(&metadata).unwrap_or_default();
                         if let Err(e) =
                             state
@@ -71,35 +92,38 @@ pub async fn run(state: AppState, notify: Arc<Notify>) {
                             pdf_bytes.len()
                         );
                         succeeded = true;
+                        jobs_since_recycle += 1;
                         break;
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         last_err = format!("{e:#}");
-                        let is_cloudflare =
-                            last_err.contains("Cloudflare") || last_err.contains("did not load");
-                        let is_chrome_dead = last_err.contains("WS send failed")
-                            || last_err.contains("CDP")
-                            || last_err.contains("Chrome");
-
-                        if is_cloudflare || is_chrome_dead {
+                        if should_retry(&last_err) {
                             warn!(
-                                "Job {} attempt {attempt}/{MAX_RETRIES} failed ({}), restarting Chrome...",
-                                job.id,
-                                if is_cloudflare {
-                                    "Cloudflare"
-                                } else {
-                                    "Chrome crashed"
-                                }
+                                job_id = %job.id,
+                                attempt,
+                                error = %last_err,
+                                "Retryable failure, restarting Chrome..."
                             );
-                            // Kill Chrome and retry with fresh session
                             if let Some(mut c) = chrome.take() {
                                 c.shutdown();
                             }
                             sleep(Duration::from_secs(RETRY_BACKOFF_SECS * attempt as u64)).await;
                             continue;
                         }
-
-                        // Non-retryable error (404, no SVGs, etc.)
+                        break; // Non-retryable
+                    }
+                    Err(_) => {
+                        last_err = format!(
+                            "Job timed out after {JOB_TIMEOUT_SECS}s — Chrome may be stuck"
+                        );
+                        warn!("Job {} {last_err}, killing Chrome...", job.id);
+                        if let Some(mut c) = chrome.take() {
+                            c.shutdown();
+                        }
+                        if attempt < MAX_RETRIES {
+                            sleep(Duration::from_secs(RETRY_BACKOFF_SECS * attempt as u64)).await;
+                            continue;
+                        }
                         break;
                     }
                 }
@@ -111,6 +135,16 @@ pub async fn run(state: AppState, notify: Arc<Notify>) {
             }
         }
     }
+}
+
+/// Determine if an error is retryable (Cloudflare, Chrome crash, network).
+fn should_retry(err: &str) -> bool {
+    err.contains("Cloudflare")
+        || err.contains("did not load")
+        || err.contains("WS send failed")
+        || err.contains("CDP")
+        || err.contains("timed out")
+        || err.contains("connection")
 }
 
 /// Process a single job using an existing Chrome session.

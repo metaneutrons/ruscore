@@ -81,6 +81,7 @@ impl JobDb {
     /// Open (or create) the database at the given path.
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path).context("failed to open SQLite database")?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")?;
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS jobs (
                 id TEXT PRIMARY KEY,
@@ -256,6 +257,16 @@ impl JobDb {
             )
             .ok()
             .flatten())
+    }
+
+    /// Reset stale "processing" jobs back to "queued" (crash recovery on startup).
+    pub fn recover_stale(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count = conn.execute(
+            "UPDATE jobs SET status = 'queued', updated_at = datetime('now') WHERE status = 'processing'",
+            [],
+        )?;
+        Ok(count)
     }
 
     /// Delete a job by ID. Returns true if deleted.

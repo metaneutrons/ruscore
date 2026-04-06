@@ -46,6 +46,12 @@ async fn main() -> Result<()> {
     let db = Arc::new(JobDb::open(db_path.to_str().unwrap())?);
     let job_notify = Arc::new(Notify::new());
 
+    // Recover any jobs stuck as "processing" from a previous crash
+    let recovered = db.recover_stale()?;
+    if recovered > 0 {
+        info!("Recovered {recovered} stale job(s) back to queued.");
+    }
+
     let state = AppState {
         db: Arc::clone(&db),
         job_notify: Arc::clone(&job_notify),
