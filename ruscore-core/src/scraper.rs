@@ -17,9 +17,34 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
     session.navigate(url).await?;
 
     // Wait for the score viewer to fully render (React hydration + lazy init)
+    // Wait for the score viewer to fully render
     info!("Waiting for score viewer to load...");
+    let mut viewer_ready = false;
     for i in 0..60 {
         sleep(Duration::from_secs(1)).await;
+
+        // Check if we're stuck on Cloudflare challenge
+        let page_url: String = session
+            .evaluate_string("window.location.href")
+            .await
+            .unwrap_or_default();
+        let title: String = session
+            .evaluate_string("document.title")
+            .await
+            .unwrap_or_default();
+
+        if title.contains("Just a moment") || title.contains("Attention Required") {
+            if i > 30 {
+                bail!("Cloudflare challenge not solved after 30s — page is blocked");
+            }
+            continue;
+        }
+
+        // Check for 404 / error pages
+        if title.contains("404") || title.contains("Page not found") {
+            bail!("Score page not found (404): {page_url}");
+        }
+
         // Check if the scrollable container has children (score pages)
         let children = session
             .evaluate_f64(
@@ -43,8 +68,13 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
                 i + 1,
                 children as usize
             );
+            viewer_ready = true;
             break;
         }
+    }
+
+    if !viewer_ready {
+        bail!("Score viewer did not load after 60s — the page may not contain a playable score");
     }
 
     let total_pages = extract_page_count(session).await?;
@@ -132,7 +162,16 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
     }
 
     if result.is_empty() {
-        bail!("no SVGs captured");
+        bail!(
+            "No SVG pages could be downloaded — the score may require a MuseScore subscription or the page structure has changed"
+        );
+    }
+
+    if result.len() < total_pages {
+        warn!(
+            "Only captured {}/{total_pages} pages — PDF will be incomplete",
+            result.len()
+        );
     }
 
     info!("Captured {}/{total_pages} SVGs.", result.len());
