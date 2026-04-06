@@ -213,7 +213,7 @@ impl JobDb {
         Ok(deleted)
     }
 
-    /// Paginated job list with optional status filter and sorting.
+    /// Paginated job list with optional status filter, sorting, and full-text search.
     pub fn list(
         &self,
         page: i64,
@@ -221,13 +221,32 @@ impl JobDb {
         status: Option<&str>,
         sort: Option<&str>,
         order: Option<&str>,
+        query: Option<&str>,
     ) -> Result<JobList> {
         let conn = self.conn.lock().unwrap();
         let offset = (page - 1) * per_page;
 
-        let where_clause = match status {
-            Some(s) => format!("WHERE status = '{s}'"),
-            None => String::new(),
+        let mut conditions = Vec::new();
+        let mut bind_values: Vec<String> = Vec::new();
+
+        if let Some(s) = status {
+            conditions.push(format!("status = ?{}", bind_values.len() + 1));
+            bind_values.push(s.to_string());
+        }
+
+        if let Some(q) = query {
+            let pattern = format!("%{q}%");
+            let idx = bind_values.len() + 1;
+            conditions.push(format!(
+                "(url LIKE ?{idx} OR json_extract(metadata, '$.title') LIKE ?{idx} OR json_extract(metadata, '$.composer') LIKE ?{idx} OR json_extract(metadata, '$.arranger') LIKE ?{idx} OR json_extract(metadata, '$.description') LIKE ?{idx} OR json_extract(metadata, '$.instruments') LIKE ?{idx})"
+            ));
+            bind_values.push(pattern);
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
         let sort_col = match sort {
@@ -244,14 +263,31 @@ impl JobDb {
 
         let count_sql = format!("SELECT COUNT(*) FROM jobs {where_clause}");
         let list_sql = format!(
-            "SELECT id, url, url_hash, status, metadata, pages, error, created_at, updated_at FROM jobs {where_clause} ORDER BY {sort_col} {sort_dir} LIMIT ?1 OFFSET ?2"
+            "SELECT id, url, url_hash, status, metadata, pages, error, created_at, updated_at FROM jobs {where_clause} ORDER BY {sort_col} {sort_dir} LIMIT ? OFFSET ?"
         );
 
-        let total: i64 = conn.query_row(&count_sql, [], |row| row.get(0))?;
+        // Build params: bind_values... then per_page, offset
+        let total: i64 = {
+            let mut stmt = conn.prepare(&count_sql)?;
+            let params: Vec<&dyn rusqlite::types::ToSql> = bind_values
+                .iter()
+                .map(|v| v as &dyn rusqlite::types::ToSql)
+                .collect();
+            stmt.query_row(params.as_slice(), |row| row.get(0))?
+        };
 
         let mut stmt = conn.prepare(&list_sql)?;
+        let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = bind_values
+            .into_iter()
+            .map(|v| Box::new(v) as Box<dyn rusqlite::types::ToSql>)
+            .collect();
+        all_params.push(Box::new(per_page));
+        all_params.push(Box::new(offset));
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            all_params.iter().map(|v| v.as_ref()).collect();
+
         let jobs = stmt
-            .query_map(params![per_page, offset], |row| Ok(row_to_job(row)))?
+            .query_map(param_refs.as_slice(), |row| Ok(row_to_job(row)))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(JobList {

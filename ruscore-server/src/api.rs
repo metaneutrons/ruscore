@@ -28,6 +28,7 @@ pub struct ListParams {
     status: Option<String>,
     sort: Option<String>,
     order: Option<String>,
+    q: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -79,6 +80,7 @@ pub async fn list_jobs(
         params.status.as_deref(),
         params.sort.as_deref(),
         params.order.as_deref(),
+        params.q.as_deref(),
     )?;
     Ok(Json(list))
 }
