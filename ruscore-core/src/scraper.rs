@@ -34,8 +34,12 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
             .unwrap_or_default();
 
         if title.contains("Just a moment") || title.contains("Attention Required") {
-            if i > 30 {
-                bail!("Cloudflare challenge not solved after 30s — page is blocked");
+            if i > 45 {
+                bail!("Cloudflare challenge not solved after 45s — page is blocked");
+            }
+            // Try to auto-click Turnstile checkbox
+            if i % 3 == 2 {
+                try_solve_turnstile(session).await;
             }
             continue;
         }
@@ -366,4 +370,102 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
         thumbnail_url,
         warnings: Vec::new(),
     })
+}
+
+/// Attempt to auto-solve Cloudflare Turnstile challenge by clicking the checkbox.
+///
+/// Turnstile renders inside an iframe. We find the iframe's position on the page
+/// and dispatch a mouse click at the checkbox location via CDP Input.dispatchMouseEvent.
+async fn try_solve_turnstile(session: &CdpSession) {
+    // Find the Turnstile iframe bounding box
+    let coords = session
+        .evaluate(
+            r#"(() => {
+                // Turnstile iframe: look for cf-turnstile or challenge iframe
+                const selectors = [
+                    'iframe[src*="challenges.cloudflare.com"]',
+                    'iframe[src*="turnstile"]',
+                    '#cf-turnstile iframe',
+                    '.cf-turnstile iframe',
+                    'iframe[title*="challenge"]',
+                ];
+                for (const sel of selectors) {
+                    const iframe = document.querySelector(sel);
+                    if (iframe) {
+                        const rect = iframe.getBoundingClientRect();
+                        // Checkbox is typically at ~30px from left, centered vertically
+                        return [rect.x + 30, rect.y + rect.height / 2];
+                    }
+                }
+                // Fallback: look for any visible challenge container
+                const container = document.querySelector('#challenge-stage, #turnstile-wrapper, .cf-turnstile');
+                if (container) {
+                    const rect = container.getBoundingClientRect();
+                    return [rect.x + 30, rect.y + rect.height / 2];
+                }
+                return null;
+            })()"#,
+        )
+        .await;
+
+    let coords = match coords {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let arr = match coords.as_array() {
+        Some(a) if a.len() == 2 => a,
+        _ => return,
+    };
+
+    let x = arr[0].as_f64().unwrap_or(0.0);
+    let y = arr[1].as_f64().unwrap_or(0.0);
+
+    if x < 1.0 || y < 1.0 {
+        return;
+    }
+
+    debug!("Attempting Turnstile auto-click at ({x}, {y})");
+
+    // Mouse move → click sequence (mimics real user interaction)
+    let _ = session
+        .send(
+            "Input.dispatchMouseEvent",
+            serde_json::json!({
+                "type": "mouseMoved",
+                "x": x,
+                "y": y,
+            }),
+        )
+        .await;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let _ = session
+        .send(
+            "Input.dispatchMouseEvent",
+            serde_json::json!({
+                "type": "mousePressed",
+                "x": x,
+                "y": y,
+                "button": "left",
+                "clickCount": 1,
+            }),
+        )
+        .await;
+
+    let _ = session
+        .send(
+            "Input.dispatchMouseEvent",
+            serde_json::json!({
+                "type": "mouseReleased",
+                "x": x,
+                "y": y,
+                "button": "left",
+                "clickCount": 1,
+            }),
+        )
+        .await;
+
+    debug!("Turnstile click dispatched");
 }
