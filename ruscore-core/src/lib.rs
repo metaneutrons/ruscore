@@ -37,4 +37,7 @@ pub struct ScoreMetadata {
     pub description: String,
     /// Thumbnail URL (first page SVG).
     pub thumbnail_url: String,
+    /// Warnings (e.g. partial capture due to PRO+ paywall).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }

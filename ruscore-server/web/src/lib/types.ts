@@ -8,6 +8,7 @@ export interface JobMetadata {
   pages: number;
   description: string;
   thumbnail_url: string;
+  warnings?: string[];
 }
 
 export interface Job {

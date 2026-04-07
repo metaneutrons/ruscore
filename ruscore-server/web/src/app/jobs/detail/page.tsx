@@ -70,6 +70,18 @@ function DetailContent() {
             )}
           </div>
 
+          {/* Warnings */}
+          {m?.warnings && m.warnings.length > 0 && (
+            <div className="p-3 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 border border-yellow-300 dark:border-yellow-700 text-sm flex items-start gap-2">
+              <span className="text-yellow-500 text-lg leading-none">⚠</span>
+              <div>
+                {m.warnings.map((w, i) => (
+                  <p key={i}>{w}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Error */}
           {job.error && (
             <div className="p-3 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 border border-red-300 dark:border-red-800 text-sm">

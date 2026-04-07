@@ -81,7 +81,7 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
     info!("Score has {total_pages} pages.");
 
     // Extract metadata from JSON-LD and DOM
-    let metadata = extract_metadata(session, total_pages).await?;
+    let mut metadata = extract_metadata(session, total_pages).await?;
     info!("Title: {}", metadata.title);
 
     // Scroll page-by-page, waiting for each SVG to load before advancing
@@ -168,10 +168,13 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
     }
 
     if result.len() < total_pages {
-        warn!(
-            "Only captured {}/{total_pages} pages — PDF will be incomplete",
-            result.len()
+        let msg = format!(
+            "Only {}/{} pages captured. This score likely requires a MuseScore Pro+ subscription to view the full score.",
+            result.len(),
+            total_pages
         );
+        warn!("{msg}");
+        metadata.warnings.push(msg);
     }
 
     info!("Captured {}/{total_pages} SVGs.", result.len());
@@ -361,5 +364,6 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
         pages: total_pages,
         description,
         thumbnail_url,
+        warnings: Vec::new(),
     })
 }

@@ -221,7 +221,12 @@ export function JobList({ refreshKey }: { refreshKey: number }) {
                   {j.pages || j.metadata?.pages || "—"}
                 </td>
                 <td className="p-3 text-center">
-                  <StatusBadge status={j.status} />
+                  <div className="flex items-center justify-center gap-1">
+                    <StatusBadge status={j.status} />
+                    {j.metadata?.warnings && j.metadata.warnings.length > 0 && (
+                      <span title={j.metadata.warnings.join("\n")} className="text-yellow-500 cursor-help">⚠</span>
+                    )}
+                  </div>
                 </td>
                 <td className="p-3 text-(--color-text-secondary) hidden lg:table-cell">
                   {new Date(j.created_at).toLocaleDateString()}
