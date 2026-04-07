@@ -16,7 +16,9 @@ pub async fn scrape(session: &mut CdpSession, url: &str) -> Result<(ScorePages, 
     info!("Navigating to {url}");
     session.navigate(url).await?;
 
-    // Wait for the score viewer to fully render (React hydration + lazy init)
+    // Dismiss cookie consent banner if present (GDPR/TCF)
+    dismiss_cookie_consent(session).await;
+
     // Wait for the score viewer to fully render
     info!("Waiting for score viewer to load...");
     let mut viewer_ready = false;
@@ -370,6 +372,94 @@ async fn extract_metadata(session: &CdpSession, total_pages: usize) -> Result<Sc
         thumbnail_url,
         warnings: Vec::new(),
     })
+}
+
+/// Dismiss cookie consent / GDPR banner if present.
+/// Tries multiple common selectors and clicks the accept/agree button.
+async fn dismiss_cookie_consent(session: &CdpSession) {
+    // Wait a moment for the banner to appear
+    sleep(Duration::from_secs(2)).await;
+
+    let clicked = session
+        .evaluate(
+            r#"(() => {
+                // Common accept button selectors for cookie consent banners
+                const selectors = [
+                    // Generic consent buttons
+                    'button[id*="accept" i]',
+                    'button[id*="agree" i]',
+                    'button[id*="consent" i]',
+                    'button[class*="accept" i]',
+                    'button[class*="agree" i]',
+                    'button[class*="consent" i]',
+                    'a[id*="accept" i]',
+                    'a[class*="accept" i]',
+                    // Text-based matching
+                    'button',
+                    'a[role="button"]',
+                ];
+
+                // First try specific selectors
+                for (const sel of selectors.slice(0, -2)) {
+                    const el = document.querySelector(sel);
+                    if (el && el.offsetParent !== null) {
+                        el.click();
+                        return 'clicked: ' + sel;
+                    }
+                }
+
+                // Then try text-based matching on all buttons
+                const textPatterns = [
+                    /^accept\s*(all)?$/i,
+                    /^agree$/i,
+                    /^i agree$/i,
+                    /^ok$/i,
+                    /^got it$/i,
+                    /^allow\s*(all)?$/i,
+                    /^continue$/i,
+                    /^accept\s*(cookies|all cookies)?$/i,
+                    /^zustimmen$/i,
+                    /^alle akzeptieren$/i,
+                    /^akzeptieren$/i,
+                ];
+
+                for (const btn of document.querySelectorAll('button, a[role="button"], [class*="cookie"] button, [class*="consent"] button, [class*="banner"] button')) {
+                    const text = (btn.textContent || '').trim();
+                    if (btn.offsetParent === null) continue;
+                    for (const pattern of textPatterns) {
+                        if (pattern.test(text)) {
+                            btn.click();
+                            return 'clicked text: ' + text;
+                        }
+                    }
+                }
+
+                // Try TCF API consent-all
+                if (typeof window.__tcfapi === 'function') {
+                    window.__tcfapi('setConsentInfo', 2, () => {}, {
+                        gdprApplies: true,
+                        hasGlobalScope: false,
+                        tcString: '',
+                        purposeOneTreatment: true,
+                    });
+                    return 'tcf api called';
+                }
+
+                return 'no banner found';
+            })()"#,
+        )
+        .await;
+
+    match clicked {
+        Ok(v) => {
+            let result = v.as_str().unwrap_or("unknown");
+            if result != "no banner found" {
+                info!("Cookie consent: {result}");
+                sleep(Duration::from_millis(500)).await;
+            }
+        }
+        Err(_) => {}
+    }
 }
 
 /// Attempt to auto-solve Cloudflare Turnstile challenge by clicking the checkbox.
