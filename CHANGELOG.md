@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0](https://github.com/metaneutrons/ruscore/compare/ruscore-v1.3.0...ruscore-v1.4.0) (2026-04-07)
+
+
+### Features
+
+* auto-dismiss cookie consent / GDPR banner ([75f57b0](https://github.com/metaneutrons/ruscore/commit/75f57b029e2b4e4ca7a7a9f319d41b89868a34a0))
+* auto-solve Cloudflare Turnstile challenge via CDP mouse click ([39f8781](https://github.com/metaneutrons/ruscore/commit/39f87811cd852435962b701365e599fd2b19ea3e))
+
 ## [1.3.0](https://github.com/metaneutrons/ruscore/compare/ruscore-v1.2.1...ruscore-v1.3.0) (2026-04-07)
 
 
