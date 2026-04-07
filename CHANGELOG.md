@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.0](https://github.com/metaneutrons/ruscore/compare/ruscore-v1.2.1...ruscore-v1.3.0) (2026-04-07)
+
+
+### Features
+
+* detect partial capture (PRO+ paywall) with warnings ([b34d959](https://github.com/metaneutrons/ruscore/commit/b34d959856739061b24707049d3cd22b6f1312e2))
+* per-row delete/retry buttons + retry API endpoint ([e261e8e](https://github.com/metaneutrons/ruscore/commit/e261e8e8950c2d8cbf3f6e268b8a3b56c2f8bb28))
+
+
+### Bug Fixes
+
+* **docker:** declare VOLUME for SQLite persistence ([d3f6bbd](https://github.com/metaneutrons/ruscore/commit/d3f6bbdfc312fb403e75915ff9a629b151f41a86))
+* **docker:** robust Xvfb + Chrome container startup ([9b3105a](https://github.com/metaneutrons/ruscore/commit/9b3105ab2dc9632cdbbfba19ad86e2d3dd5f3c27))
+
 ## [1.2.1](https://github.com/metaneutrons/ruscore/compare/ruscore-v1.2.0...ruscore-v1.2.1) (2026-04-06)
 
 
